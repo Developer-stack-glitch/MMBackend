@@ -54,8 +54,8 @@ export const addExpense = async (req, res) => {
             `INSERT INTO expenses 
                  (user_id, branch, date, total, main_category, sub_category, description, 
                   icon, color, invoice, spend_mode, gst, status,
-                  transaction_from, transaction_to, vendor_name, vendor_number)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?)`,
+                  transaction_from, transaction_to, vendor_name, vendor_number, vendor_gst)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?)`,
             [
                 user_id,
                 branch,
@@ -72,7 +72,8 @@ export const addExpense = async (req, res) => {
                 transaction_from || null,
                 transaction_to || null,
                 vendor_name || null,
-                vendor_number || null
+                vendor_number || null,
+                req.body.vendor_gst || null
             ]
         );
 
@@ -98,9 +99,6 @@ export const addApproval = async (req, res) => {
         description,
         gst,
         transaction_from,
-        transaction_to,
-        vendor_name,
-        vendor_number,
         end_date
     } = req.body;
 
@@ -135,8 +133,8 @@ export const addApproval = async (req, res) => {
             `INSERT INTO approvals
              (user_id, name, role, category, categoryColor, amount, frequency, 
               main_category, sub_category, branch, date, status, color, icon, invoice,
-              gst, original_expense_id, transaction_from, transaction_to, vendor_name, vendor_number, end_date)
-             VALUES (?, ?, ?, ?, ?, ?, 'Once', ?, ?, ?, ?, 'pending', ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`,
+              gst, original_expense_id, transaction_from, end_date)
+             VALUES (?, ?, ?, ?, ?, ?, 'Once', ?, ?, ?, ?, 'pending', ?, ?, ?, ?, NULL, ?, ?)`,
             [
                 user_id,
                 userName,
@@ -153,9 +151,6 @@ export const addApproval = async (req, res) => {
                 invoiceJson,         // invoice
                 gst || "No",         // gst
                 transaction_from || null,
-                transaction_to || null,
-                vendor_name || null,
-                vendor_number || null,
                 end_date || null     // end_date
             ]
         );
@@ -241,7 +236,7 @@ export const getAllExpenses = async (req, res) => {
                 e.id, e.user_id, u.name AS user_name, e.branch, e.date, e.total,
                 e.main_category, e.sub_category, e.description, e.invoice,
                 e.icon, e.color, 
-                e.spend_mode, e.gst, e.status, e.vendor_name, e.vendor_number
+                e.spend_mode, e.gst, e.status, e.vendor_name, e.vendor_number, e.vendor_gst
             FROM expenses e
             LEFT JOIN users u ON u.id = e.user_id
             ${where}
@@ -360,7 +355,7 @@ export const getExpensesPaginated = async (req, res) => {
                 e.branch, e.date, e.total,
                 e.main_category, e.sub_category, 
                 e.description, e.invoice, e.icon, e.color,
-                e.spend_mode, e.gst, e.vendor_name, e.vendor_number
+                e.spend_mode, e.gst, e.vendor_name, e.vendor_number, e.vendor_gst
             FROM expenses e
             LEFT JOIN users u ON u.id = e.user_id
             ${where}
@@ -616,7 +611,7 @@ export const approveExpense = async (req, res) => {
                 `UPDATE wallet SET 
                     user_id=?, name=?, role=?, category=?, categoryColor=?, amount=?, frequency=?, 
                     main_category=?, sub_category=?, branch=?, date=?, type='income', color=?, icon=?, invoice=?,
-                    gst=?, transaction_from=?, transaction_to=?, vendor_name=?, vendor_number=?, end_date=?, note=?
+                    gst=?, transaction_from=?, transaction_to=?, vendor_name=?, vendor_number=?, vendor_gst=?, end_date=?, note=?
                  WHERE id=?`,
                 [
                     request.user_id,
@@ -638,6 +633,7 @@ export const approveExpense = async (req, res) => {
                     request.transaction_to,
                     request.vendor_name,
                     request.vendor_number,
+                    request.vendor_gst,
                     request.end_date,
                     request.role || "Approved Expense",
                     existingWallet.id
@@ -650,8 +646,8 @@ export const approveExpense = async (req, res) => {
                 `INSERT INTO wallet 
                  (user_id, name, role, category, categoryColor, amount, frequency, 
                   main_category, sub_category, branch, date, type, color, icon, invoice,
-                  gst, transaction_from, transaction_to, vendor_name, vendor_number, end_date, note, approval_id)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'income', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                  gst, transaction_from, transaction_to, vendor_name, vendor_number, vendor_gst, end_date, note, approval_id)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'income', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     request.user_id,
                     request.name,
@@ -672,6 +668,7 @@ export const approveExpense = async (req, res) => {
                     request.transaction_to,
                     request.vendor_name,
                     request.vendor_number,
+                    request.vendor_gst,
                     request.end_date,
                     request.role || "Approved Expense",
                     id
@@ -773,15 +770,31 @@ export const editExpense = async (req, res) => {
                 return res.status(404).json({ message: "Approval request not found" });
             }
 
-            // Update the approval record directly
-            // Set status to pending to trigger re-approval if it was approved
+            // Determine status based on role
+            // If Admin edits: Auto-approve (or keep approved) and sync wallet.
+            // If User edits: Revert to pending, remove from wallet.
+            const isAdm = requesterRole === "admin";
+            const newStatus = isAdm ? 'approved' : 'pending';
+            const newIsEdit = isAdm ? 0 : 1;
+
+            // Fetch latest icon/color for the category (in case category changed)
+            const [cat] = await pool.query(
+                `SELECT icon, color FROM expense_category 
+                 WHERE main_category = ? AND sub_category = ? LIMIT 1`,
+                [updates.mainCategory, updates.subCategory]
+            );
+            const icon = cat[0]?.icon || approval.icon;
+            const color = cat[0]?.color || approval.color;
+
+            // Update the approval record
             await pool.query(
                 `UPDATE approvals SET 
                     amount=?, branch=?, date=?, main_category=?, sub_category=?, 
                     role=?, invoice=?, 
-                    gst=?, transaction_from=?, transaction_to=?, vendor_name=?, vendor_number=?, end_date=?,
-                    status='pending',
-                    is_edit=1
+                    gst=?, transaction_from=?, end_date=?,
+                    status=?,
+                    is_edit=?,
+                    icon=?, color=?, category=?, categoryColor=?
                  WHERE id=?`,
                 [
                     updates.total,
@@ -793,18 +806,85 @@ export const editExpense = async (req, res) => {
                     invoiceJson,
                     updates.gst,
                     updates.transaction_from || null,
-                    updates.transaction_to || null,
-                    updates.vendor_name || null,
-                    updates.vendor_number || null,
                     updates.end_date || null,
+                    newStatus,
+                    newIsEdit,
+                    icon, color, updates.subCategory, color, // category=subCategory, categoryColor=color
                     expense_id
                 ]
             );
 
-            // Access to wallet: Remove from wallet if it exists (since it is now pending)
-            await pool.query(`DELETE FROM wallet WHERE approval_id=?`, [expense_id]);
+            if (isAdm) {
+                // SYNC WITH WALLET (Upsert)
+                const [[existingWallet]] = await pool.query(`SELECT id FROM wallet WHERE approval_id=?`, [expense_id]);
 
-            return res.json({ message: "Approval request updated!" });
+                if (existingWallet) {
+                    // Update existing wallet entry
+                    await pool.query(
+                        `UPDATE wallet SET 
+                            amount=?, branch=?, date=?, main_category=?, sub_category=?, 
+                            role=?, invoice=?, 
+                            gst=?, transaction_from=?, end_date=?,
+                            note=?,
+                            color=?, icon=?, category=?, categoryColor=?
+                         WHERE id=?`,
+                        [
+                            updates.total,
+                            updates.branch,
+                            updates.date,
+                            updates.mainCategory,
+                            updates.subCategory,
+                            updates.description, // role/ note
+                            invoiceJson,
+                            updates.gst,
+                            updates.transaction_from || null,
+                            updates.end_date || null,
+                            updates.description, // note gets description
+                            color, icon, updates.subCategory, color,
+                            existingWallet.id
+                        ]
+                    );
+                } else {
+                    // Insert new wallet entry
+                    await pool.query(
+                        `INSERT INTO wallet 
+                         (user_id, name, role, category, categoryColor, amount, frequency, 
+                          main_category, sub_category, branch, date, type, color, icon, invoice,
+                          gst, transaction_from, transaction_to, vendor_name, vendor_number, vendor_gst, end_date, note, approval_id)
+                         VALUES (?, ?, ?, ?, ?, ?, 'Once', ?, ?, ?, ?, 'income', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        [
+                            approval.user_id,
+                            approval.name,
+                            updates.description, // role
+                            updates.subCategory, // category
+                            color,               // categoryColor
+                            updates.total,       // amount
+                            updates.mainCategory,
+                            updates.subCategory,
+                            updates.branch,
+                            updates.date,
+                            color,
+                            icon,
+                            invoiceJson,
+                            updates.gst,
+                            updates.transaction_from || null,
+                            approval.transaction_to, // Keep original vendor info if not updated? Updates usually don't have this?
+                            approval.vendor_name,
+                            approval.vendor_number,
+                            approval.vendor_gst,
+                            updates.end_date || null,
+                            updates.description, // note
+                            expense_id
+                        ]
+                    );
+                }
+                return res.json({ message: "Approval updated and synced!" });
+
+            } else {
+                // Access to wallet: Remove from wallet if it exists (since it is now pending)
+                await pool.query(`DELETE FROM wallet WHERE approval_id=?`, [expense_id]);
+                return res.json({ message: "Approval request updated (pending re-approval)!" });
+            }
         }
 
         // --------------------------------------------------------------------------------
@@ -839,14 +919,18 @@ export const editExpense = async (req, res) => {
                 return res.status(404).json({ message: "Not found" });
             }
 
-            // Update the pending expense in approvals table
+            const isAdm = requesterRole === "admin";
+            const newStatus = isAdm ? 'approved' : 'pending';
+            const isEditFlag = isAdm ? 0 : 1;
+
+            // Update the expense in approvals table
             await pool.query(
                 `UPDATE approvals SET 
                     amount=?, branch=?, date=?, main_category=?, sub_category=?, 
                     role=?, invoice=?, 
-                    gst=?, transaction_from=?, transaction_to=?, vendor_name=?, vendor_number=?, end_date=?,
-                    status='pending',
-                    is_edit=1
+                    gst=?, transaction_from=?, end_date=?,
+                    status=?,
+                    is_edit=?
                  WHERE id=?`,
                 [
                     updates.total,
@@ -858,18 +942,61 @@ export const editExpense = async (req, res) => {
                     invoiceJson,
                     updates.gst,
                     updates.transaction_from || null,
-                    updates.transaction_to || null,
-                    updates.vendor_name || null,
-                    updates.vendor_number || null,
                     updates.end_date || null,
+                    newStatus,
+                    isEditFlag,
                     expense_id
                 ]
             );
 
-            // Access to wallet: Remove from wallet if it exists (since it is now pending)
-            await pool.query(`DELETE FROM wallet WHERE approval_id=?`, [expense_id]);
+            if (isAdm) {
+                // Upsert into EXPENSES table (The "Wallet Update" user refers to is expenses logic)
+                // Check if we already have an original_expense_id
+                let origExpId = approval.original_expense_id;
 
-            return res.json({ message: "Pending expense updated!" });
+                if (origExpId) {
+                    await pool.query(
+                        `UPDATE expenses SET 
+                            total=?, branch=?, date=?, main_category=?, sub_category=?, 
+                            description=?, invoice=?, status='approved', spend_mode=?, gst=?,
+                            transaction_from=?, transaction_to=?, vendor_name=?, vendor_number=?, vendor_gst=?
+                         WHERE id=?`,
+                        [
+                            updates.total, updates.branch, updates.date, updates.mainCategory, updates.subCategory,
+                            updates.description, invoiceJson, updates.spend_mode, updates.gst,
+                            updates.transaction_from, approval.transaction_to, approval.vendor_name, approval.vendor_number, approval.vendor_gst,
+                            origExpId
+                        ]
+                    );
+                } else {
+                    // Create new Expense
+                    const [insRes] = await pool.query(
+                        `INSERT INTO expenses 
+                         (user_id, branch, date, total, main_category, sub_category, description, 
+                          icon, color, invoice, spend_mode, gst, status,
+                          transaction_from, transaction_to, vendor_name, vendor_number, vendor_gst)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?)`,
+                        [
+                            approval.user_id, updates.branch, updates.date, updates.total, updates.mainCategory, updates.subCategory, updates.description,
+                            approval.icon, approval.color, invoiceJson, updates.spend_mode, updates.gst,
+                            updates.transaction_from, approval.transaction_to, approval.vendor_name, approval.vendor_number, approval.vendor_gst
+                        ]
+                    );
+                    origExpId = insRes.insertId;
+                    // Link back
+                    await pool.query('UPDATE approvals SET original_expense_id=? WHERE id=?', [origExpId, expense_id]);
+                }
+
+                // Cleanup wallet table if it was wrongly added there as income
+                await pool.query('DELETE FROM wallet WHERE approval_id=?', [expense_id]);
+
+                return res.json({ message: "Expense updated and approved!" });
+
+            } else {
+                // Non-admin: Remove from wallet if it exists (since it is now pending)
+                await pool.query(`DELETE FROM wallet WHERE approval_id=?`, [expense_id]);
+                return res.json({ message: "Pending expense updated!" });
+            }
         }
 
         // 3. ADMIN: Update directly in expenses table
@@ -878,21 +1005,33 @@ export const editExpense = async (req, res) => {
                 `UPDATE expenses SET 
                     total=?, branch=?, date=?, main_category=?, sub_category=?, 
                     description=?, invoice=?, 
-                    spend_mode=?, gst=?
+                    spend_mode=?, gst=?, status='approved'
                  WHERE id=?`,
                 [
-                    updates.total,
-                    updates.branch,
-                    updates.date,
-                    updates.mainCategory,
-                    updates.subCategory,
-                    updates.description,
-                    invoiceJson,
-                    updates.spend_mode,
-                    updates.gst,
+                    updates.total, updates.branch, updates.date, updates.mainCategory, updates.subCategory,
+                    updates.description, invoiceJson,
+                    updates.spend_mode, updates.gst,
                     expense_id
                 ]
             );
+
+            // SYNC APPROVALS
+            await pool.query(
+                `UPDATE approvals SET 
+                    amount=?, branch=?, date=?, main_category=?, sub_category=?, 
+                    role=?, invoice=?, 
+                    gst=?, transaction_from=?, end_date=?,
+                    status='approved',
+                    is_edit=0
+                 WHERE original_expense_id=?`,
+                [
+                    updates.total, updates.branch, updates.date, updates.mainCategory, updates.subCategory,
+                    updates.description, invoiceJson,
+                    updates.gst, updates.transaction_from || null, updates.end_date || null,
+                    expense_id
+                ]
+            );
+
             return res.json({ message: "Expense updated successfully!" });
         }
 
@@ -904,7 +1043,7 @@ export const editExpense = async (req, res) => {
                 `UPDATE approvals SET 
                     amount=?, branch=?, date=?, main_category=?, sub_category=?, 
                     role=?, invoice=?, 
-                    gst=?, transaction_from=?, transaction_to=?, vendor_name=?, vendor_number=?, end_date=?
+                    gst=?, transaction_from=?, end_date=?
                  WHERE original_expense_id=?`,
                 [
                     updates.total,
@@ -916,9 +1055,6 @@ export const editExpense = async (req, res) => {
                     invoiceJson,
                     updates.gst,
                     updates.transaction_from || null,
-                    updates.transaction_to || null,
-                    updates.vendor_name || null,
-                    updates.vendor_number || null,
                     updates.end_date || null,
                     expense_id
                 ]
@@ -927,42 +1063,8 @@ export const editExpense = async (req, res) => {
             return res.json({ message: "Pending expense updated!" });
         }
 
-        /* ----------------------------------------
-            CASE 2: Approved → send for re-approval
-        -----------------------------------------*/
-        await pool.query(`UPDATE expenses SET status='pending' WHERE id=?`, [expense_id]);
+        return res.status(403).json({ message: "Action not allowed" });
 
-        await pool.query(
-            `INSERT INTO approvals
-             (original_expense_id, user_id, name, role, category, categoryColor, amount, frequency, end_date,
-              main_category, sub_category, branch, date, status, color, icon, invoice, gst,
-              transaction_from, transaction_to, vendor_name, vendor_number)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'Once', ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-                expense_id,
-                requesterId,
-                requesterName,
-                updates.description || exp.description,
-                updates.subCategory || exp.sub_category,
-                exp.color,
-                updates.total,
-                updates.end_date || null,
-                updates.mainCategory || exp.main_category,
-                updates.subCategory || exp.sub_category,
-                updates.branch || exp.branch,
-                updates.date || exp.date,
-                exp.color,
-                exp.icon,
-                invoiceJson,
-                updates.gst || exp.gst,
-                updates.transaction_from || null,
-                updates.transaction_to || null,
-                updates.vendor_name || null,
-                updates.vendor_number || null
-            ]
-        );
-
-        return res.json({ message: "Approved expense sent for re-approval!" });
 
     } catch (err) {
         console.error(err);
@@ -990,9 +1092,6 @@ export const getUserAllExpenses = async (req, res) => {
                 icon,
                 status,
                 transaction_from,
-                transaction_to,
-                vendor_name,
-                vendor_number,
                 end_date,
                 name AS user_name,
                 is_edit
@@ -1003,7 +1102,7 @@ export const getUserAllExpenses = async (req, res) => {
                 e.id, e.date, e.total, e.branch, e.main_category, e.sub_category, e.description,
                 e.spend_mode, e.gst, e.invoice,
                 e.color, e.icon,
-                e.status, e.transaction_from, e.transaction_to, e.vendor_name, e.vendor_number,
+                e.status, e.transaction_from, e.transaction_to, e.vendor_name, e.vendor_number, e.vendor_gst,
                 u.name AS user_name
              FROM expenses e
              LEFT JOIN users u ON e.user_id = u.id`;

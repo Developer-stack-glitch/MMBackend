@@ -220,10 +220,13 @@ export const getVendors = async (req, res) => {
 };
 
 export const addVendor = async (req, res) => {
-    const { name, number } = req.body;
+    const { name, number, company_name, gst, email, address } = req.body;
     if (!name) return res.status(400).json({ message: "Vendor name is required" });
     try {
-        await pool.query("INSERT INTO vendors (name, number) VALUES (?, ?)", [name, number]);
+        await pool.query(
+            "INSERT INTO vendors (name, number, company_name, gst, email, address) VALUES (?, ?, ?, ?, ?, ?)",
+            [name, number, company_name, gst, email, address]
+        );
         res.json({ message: "Vendor added successfully" });
     } catch (err) {
         console.error(err);
