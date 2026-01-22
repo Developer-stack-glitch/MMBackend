@@ -13,7 +13,8 @@ import {
     getExpensesPaginated,
     getIncomePaginated,
     editExpense,
-    getUserAllExpenses
+    getUserAllExpenses,
+    deleteExpense
 } from "./controller.js";
 import { verifyToken } from "../middleware/auth.js";
 import { upload } from "../middleware/upload.js";
@@ -34,5 +35,6 @@ router.post("/reject-expense", rejectExpense);
 router.get("/expenses-paginated", verifyToken, getExpensesPaginated);
 router.get("/income-paginated", verifyToken, getIncomePaginated);
 router.get("/user-all-expenses", verifyToken, getUserAllExpenses);
+router.delete("/delete-expense/:id", verifyToken, deleteExpense);
 
 export default router;

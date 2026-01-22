@@ -4,17 +4,26 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import helmet from "helmet";
 import path from "path";
+import { fileURLToPath } from "url";
+
 import walletRoutes from "./wallet/routes.js";
 import authRoutes from "./auth/routes.js";
 import categoryRoutes from "./categories/routes.js";
 import transactionRoutes from "./transactions/routes.js";
 import calendarRoutes from "./calendar/routes.js";
 import { initializeAlertScheduler } from "./calendar/alertScheduler.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 dotenv.config();
+
 const app = express();
+
 /* ---------------------------------------------------
    🔐 SECURITY (FIXED FOR IMAGE / PDF PREVIEW)
 --------------------------------------------------- */
+
 // ✅ Helmet configured correctly
 app.use(
     helmet({
@@ -27,7 +36,9 @@ app.use(
                     "'self'",
                     "data:",
                     "blob:",
-                    "https://money.actecrm.com"
+                    "https://money.actecrm.com",
+                    "http://localhost:4000",
+                    "http://localhost:5173"
                 ],
                 mediaSrc: [
                     "'self'",
@@ -36,7 +47,7 @@ app.use(
                 ],
                 scriptSrc: ["'self'", "'unsafe-inline'"],
                 styleSrc: ["'self'", "'unsafe-inline'"],
-                connectSrc: ["'self'", "https://money.actecrm.com"],
+                connectSrc: ["'self'", "https://money.actecrm.com", "http://localhost:4000"],
                 frameSrc: [
                     "'self'",
                     "blob:",
@@ -46,20 +57,25 @@ app.use(
         },
     })
 );
+
 // ✅ REQUIRED: Allow cross-origin loading of static assets
 app.use((req, res, next) => {
     res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
     next();
 });
+
 /* ---------------------------------------------------
    🧠 BODY & COOKIES
 --------------------------------------------------- */
+
 app.use(express.json({ limit: "500mb" }));
 app.use(express.urlencoded({ limit: "500mb", extended: true }));
 app.use(cookieParser());
+
 /* ---------------------------------------------------
    🌍 CORS
 --------------------------------------------------- */
+
 app.use(
     cors({
         origin: [
@@ -70,37 +86,46 @@ app.use(
         credentials: true,
     })
 );
+
 /* ---------------------------------------------------
    📁 STATIC UPLOADS (🔥 FIXED)
 --------------------------------------------------- */
+
 app.use(
     "/uploads",
-    express.static(path.resolve("uploads"), {
+    express.static(path.join(__dirname, "uploads"), {
         setHeaders(res) {
             res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
             res.setHeader("Access-Control-Allow-Origin", "*");
         },
     })
 );
+
 /* ---------------------------------------------------
    🚀 API ROUTES
 --------------------------------------------------- */
+
 app.use("/api/auth", authRoutes);
 app.use("/api/categories", categoryRoutes);
 app.use("/api/transactions", transactionRoutes);
 app.use("/api/wallet", walletRoutes);
 app.use("/api/calendar", calendarRoutes);
+
 /* ---------------------------------------------------
    ❤️ HEALTH CHECK
 --------------------------------------------------- */
+
 app.get("/health", (_req, res) => {
     res.json({ ok: true });
 });
+
 /* ---------------------------------------------------
    ▶️ START SERVER
 --------------------------------------------------- */
+
 const port = Number(process.env.PORT || 4000);
-app.listen(port, () => {
+
+app.listen(port, "0.0.0.0", () => {
     console.log(`✅ Server running on http://localhost:${port}`);
     initializeAlertScheduler();
 });

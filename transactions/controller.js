@@ -562,19 +562,31 @@ export const getApprovals = async (req, res) => {
     try {
         const userId = req.user.id;
         const role = req.user.role;
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const offset = (page - 1) * limit;
 
         let query = `SELECT * FROM approvals WHERE status='pending'`;
+        let countQuery = `SELECT COUNT(*) as total FROM approvals WHERE status='pending'`;
         let params = [];
 
         if (String(role).toLowerCase() !== 'admin') {
             query += ` AND user_id = ?`;
+            countQuery += ` AND user_id = ?`;
             params.push(userId);
         }
 
-        query += ` ORDER BY id DESC`;
+        query += ` ORDER BY id DESC LIMIT ? OFFSET ?`;
 
-        const [rows] = await pool.query(query, params);
-        res.json(rows);
+        const [rows] = await pool.query(query, [...params, limit, offset]);
+        const [[countResult]] = await pool.query(countQuery, params);
+
+        res.json({
+            data: rows,
+            total: countResult.total,
+            page,
+            limit
+        });
 
     } catch (err) {
         console.error(err);
@@ -1073,10 +1085,15 @@ export const editExpense = async (req, res) => {
 };
 
 
+
+
 export const getUserAllExpenses = async (req, res) => {
     try {
         const userId = req.user.id;
         const userRole = req.user.role;
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const offset = (page - 1) * limit;
 
         let approvalsQuery = `SELECT
                 id,
@@ -1107,23 +1124,36 @@ export const getUserAllExpenses = async (req, res) => {
              FROM expenses e
              LEFT JOIN users u ON e.user_id = u.id`;
 
+        // Counts
+        let approvalsCountQuery = `SELECT COUNT(*) as total FROM approvals WHERE status = 'approved'`;
+        let expensesCountQuery = `SELECT COUNT(*) as total FROM expenses e`;
+
         let params = [];
 
         if (String(userRole).toLowerCase() !== 'admin') {
             approvalsQuery += ` AND user_id = ?`;
             expensesQuery += ` WHERE e.user_id = ?`;
+            approvalsCountQuery += ` AND user_id = ?`;
+            expensesCountQuery += ` WHERE e.user_id = ?`;
             params = [userId];
         }
 
-        const [approvals] = await pool.query(approvalsQuery, params);
-        const [expenses] = await pool.query(expensesQuery, params);
+        approvalsQuery += ` ORDER BY date DESC, id DESC LIMIT ? OFFSET ?`;
+        expensesQuery += ` ORDER BY e.date DESC, e.id DESC LIMIT ? OFFSET ?`;
+
+        const [approvals] = await pool.query(approvalsQuery, [...params, limit, offset]);
+        const [expenses] = await pool.query(expensesQuery, [...params, limit, offset]);
+
+        const [[approvalsCount]] = await pool.query(approvalsCountQuery, params);
+        const [[expensesCount]] = await pool.query(expensesCountQuery, params);
 
         return res.json({
-            approvals,
-            expenses,
-            all: [...approvals, ...expenses].sort(
-                (a, b) => new Date(b.date) - new Date(a.date)
-            )
+            approvals: approvals,
+            approvalsTotal: approvalsCount.total,
+            expenses: expenses,
+            expensesTotal: expensesCount.total,
+            page,
+            limit
         });
 
     } catch (err) {
@@ -1133,3 +1163,40 @@ export const getUserAllExpenses = async (req, res) => {
 };
 
 
+
+/* -------------------------------------------------------
+   DELETE EXPENSE
+---------------------------------------------------------*/
+export const deleteExpense = async (req, res) => {
+    const { id } = req.params;
+    const userRole = req.user.role;
+    const userId = req.user.id;
+
+    try {
+        // 1. Check if expense exists
+        const [[expense]] = await pool.query(`SELECT * FROM expenses WHERE id=?`, [id]);
+        if (!expense) {
+            return res.status(404).json({ message: "Expense not found" });
+        }
+
+        // 2. Permission check
+        if (userRole !== 'admin' && expense.user_id !== userId) {
+            return res.status(403).json({ message: "You are not authorized to delete this expense" });
+        }
+
+        // 3. Delete from expenses
+        await pool.query(`DELETE FROM expenses WHERE id=?`, [id]);
+
+        // 4. Also check if there is a linked approval (original_expense_id) and maybe reset it?
+        // Or if this expense WAS an approval converted?
+        // If an approval has original_expense_id = this id, we might want to nullify it or set status back to pending?
+        // For now, let's just nullify the connection so it doesn't point to non-existent expense
+        await pool.query(`UPDATE approvals SET original_expense_id=NULL, status='pending' WHERE original_expense_id=?`, [id]);
+
+        return res.json({ message: "Expense deleted successfully" });
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Server Error" });
+    }
+};
