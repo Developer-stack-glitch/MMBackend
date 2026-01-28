@@ -1095,6 +1095,9 @@ export const getUserAllExpenses = async (req, res) => {
         const limit = parseInt(req.query.limit) || 10;
         const offset = (page - 1) * limit;
 
+        const nameFilter = req.query.name;
+        const branchFilter = req.query.branch;
+
         let approvalsQuery = `SELECT
                 id,
                 date,
@@ -1122,20 +1125,39 @@ export const getUserAllExpenses = async (req, res) => {
                 e.status, e.transaction_from, e.transaction_to, e.vendor_name, e.vendor_number, e.vendor_gst,
                 u.name AS user_name
              FROM expenses e
-             LEFT JOIN users u ON e.user_id = u.id`;
+             LEFT JOIN users u ON e.user_id = u.id
+             WHERE 1=1`;
 
-        // Counts
         let approvalsCountQuery = `SELECT COUNT(*) as total FROM approvals WHERE status = 'approved'`;
-        let expensesCountQuery = `SELECT COUNT(*) as total FROM expenses e`;
+        let expensesCountQuery = `SELECT COUNT(*) as total FROM expenses e LEFT JOIN users u ON e.user_id = u.id WHERE 1=1`;
 
         let params = [];
 
+        // 1. Role Filter
         if (String(userRole).toLowerCase() !== 'admin') {
             approvalsQuery += ` AND user_id = ?`;
-            expensesQuery += ` WHERE e.user_id = ?`;
+            expensesQuery += ` AND e.user_id = ?`;
             approvalsCountQuery += ` AND user_id = ?`;
-            expensesCountQuery += ` WHERE e.user_id = ?`;
-            params = [userId];
+            expensesCountQuery += ` AND e.user_id = ?`;
+            params.push(userId);
+        }
+
+        // 2. Name Filter
+        if (nameFilter && nameFilter !== 'All') {
+            approvalsQuery += ` AND name = ?`;
+            expensesQuery += ` AND u.name = ?`;
+            approvalsCountQuery += ` AND name = ?`;
+            expensesCountQuery += ` AND u.name = ?`;
+            params.push(nameFilter);
+        }
+
+        // 3. Branch Filter
+        if (branchFilter && branchFilter !== 'All') {
+            approvalsQuery += ` AND branch = ?`;
+            expensesQuery += ` AND e.branch = ?`;
+            approvalsCountQuery += ` AND branch = ?`;
+            expensesCountQuery += ` AND e.branch = ?`;
+            params.push(branchFilter);
         }
 
         approvalsQuery += ` ORDER BY date DESC, id DESC LIMIT ? OFFSET ?`;
@@ -1159,6 +1181,53 @@ export const getUserAllExpenses = async (req, res) => {
     } catch (err) {
         console.log(err);
         res.status(500).json({ message: "Server error" });
+    }
+};
+
+
+export const getTransactionFilterOptions = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const userRole = req.user.role;
+        let params = [];
+        let whereExp = "";
+        let whereApp = "";
+
+        if (String(userRole).toLowerCase() !== 'admin') {
+            whereExp = "WHERE user_id = ?";
+            whereApp = "WHERE user_id = ?";
+            params = [userId];
+        }
+
+        // Get unique branches
+        const [expBranches] = await pool.query(`SELECT DISTINCT branch FROM expenses ${whereExp}`, params);
+        const [appBranches] = await pool.query(`SELECT DISTINCT branch FROM approvals ${whereApp}`, params);
+
+        const allBranches = [
+            ...expBranches.map(b => b.branch),
+            ...appBranches.map(b => b.branch)
+        ].filter(Boolean);
+        const uniqueBranches = [...new Set(allBranches)];
+
+        // Get Names
+        let uniqueNames = [];
+        if (String(userRole).toLowerCase() === 'admin') {
+            // Get all users
+            const [users] = await pool.query(`SELECT name FROM users`);
+            uniqueNames = users.map(u => u.name).filter(Boolean);
+        } else {
+            const [[usr]] = await pool.query(`SELECT name FROM users WHERE id=?`, [userId]);
+            uniqueNames = [usr?.name].filter(Boolean);
+        }
+
+        return res.json({
+            branches: uniqueBranches,
+            names: uniqueNames
+        });
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Server Error" });
     }
 };
 
