@@ -566,6 +566,9 @@ export const getApprovals = async (req, res) => {
         const limit = parseInt(req.query.limit) || 10;
         const offset = (page - 1) * limit;
 
+        const startDate = req.query.startDate;
+        const endDate = req.query.endDate;
+
         let query = `SELECT * FROM approvals WHERE status='pending'`;
         let countQuery = `SELECT COUNT(*) as total FROM approvals WHERE status='pending'`;
         let params = [];
@@ -574,6 +577,12 @@ export const getApprovals = async (req, res) => {
             query += ` AND user_id = ?`;
             countQuery += ` AND user_id = ?`;
             params.push(userId);
+        }
+
+        if (startDate && endDate) {
+            query += ` AND date >= ? AND date <= ?`;
+            countQuery += ` AND date >= ? AND date <= ?`;
+            params.push(startDate, endDate);
         }
 
         query += ` ORDER BY id DESC LIMIT ? OFFSET ?`;
@@ -1097,6 +1106,8 @@ export const getUserAllExpenses = async (req, res) => {
 
         const nameFilter = req.query.name;
         const branchFilter = req.query.branch;
+        const startDate = req.query.startDate;
+        const endDate = req.query.endDate;
 
         let approvalsQuery = `SELECT
                 id,
@@ -1158,6 +1169,14 @@ export const getUserAllExpenses = async (req, res) => {
             approvalsCountQuery += ` AND branch = ?`;
             expensesCountQuery += ` AND e.branch = ?`;
             params.push(branchFilter);
+        }
+
+        if (startDate && endDate) {
+            approvalsQuery += ` AND date >= ? AND date <= ?`;
+            expensesQuery += ` AND e.date >= ? AND e.date <= ?`;
+            approvalsCountQuery += ` AND date >= ? AND date <= ?`;
+            expensesCountQuery += ` AND e.date >= ? AND e.date <= ?`;
+            params.push(startDate, endDate);
         }
 
         approvalsQuery += ` ORDER BY date DESC, id DESC LIMIT ? OFFSET ?`;
