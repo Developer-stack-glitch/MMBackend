@@ -142,7 +142,7 @@ export const getAllWalletDetails = async (req, res) => {
         const [users] = await pool.query(
             `SELECT id, name, email, role 
              FROM users 
-             WHERE role != 'admin'`
+             WHERE role != 'admin' AND role != 'superadmin'`
         );
 
         // For each user, calculate received, spend, and balance
@@ -228,6 +228,46 @@ export const addVendor = async (req, res) => {
             [name, number, company_name, gst, email, address]
         );
         res.json({ message: "Vendor added successfully" });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+export const updateVendor = async (req, res) => {
+    const { id } = req.params;
+    const { name, number, company_name, gst, email, address } = req.body;
+
+    if (!name) return res.status(400).json({ message: "Vendor name is required" });
+
+    try {
+        const [result] = await pool.query(
+            "UPDATE vendors SET name = ?, number = ?, company_name = ?, gst = ?, email = ?, address = ? WHERE id = ?",
+            [name, number, company_name, gst, email, address, id]
+        );
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: "Vendor not found" });
+        }
+
+        res.json({ message: "Vendor updated successfully" });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+export const deleteVendor = async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        const [result] = await pool.query("DELETE FROM vendors WHERE id = ?", [id]);
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: "Vendor not found" });
+        }
+
+        res.json({ message: "Vendor deleted successfully" });
     } catch (err) {
         console.error(err);
         res.status(500).json({ message: "Server error" });

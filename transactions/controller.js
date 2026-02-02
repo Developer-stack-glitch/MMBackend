@@ -253,7 +253,7 @@ export const getAllExpenses = async (req, res) => {
         }));
 
         const countSql = `SELECT COUNT(*) AS total FROM expenses e ${where}`;
-        const [[count]] = await pool.query(countSql, role === "user" ? [userId] : []);
+        const [[count]] = await pool.query(countSql, (role !== "admin" && role !== "superadmin") ? [userId] : []);
 
         return res.json({
             data: parsedRows,
@@ -308,7 +308,7 @@ export const getAllIncome = async (req, res) => {
         }));
 
         const countSql = `SELECT COUNT(*) AS total FROM incomes i ${where}`;
-        const [[count]] = await pool.query(countSql, role === "user" ? [userId] : []);
+        const [[count]] = await pool.query(countSql, (role !== "admin" && role !== "superadmin") ? [userId] : []);
 
         return res.json({
             data: parsedRows,
@@ -573,7 +573,7 @@ export const getApprovals = async (req, res) => {
         let countQuery = `SELECT COUNT(*) as total FROM approvals WHERE status='pending'`;
         let params = [];
 
-        if (String(role).toLowerCase() !== 'admin') {
+        if (String(role).toLowerCase() !== 'admin' && String(role).toLowerCase() !== 'superadmin') {
             query += ` AND user_id = ?`;
             countQuery += ` AND user_id = ?`;
             params.push(userId);
@@ -780,7 +780,7 @@ export const editExpense = async (req, res) => {
             let approvalQuery = `SELECT * FROM approvals WHERE id=?`;
             let approvalParams = [expense_id];
 
-            if (requesterRole !== "admin") {
+            if (requesterRole !== "admin" && requesterRole !== "superadmin") {
                 approvalQuery += ` AND user_id=?`;
                 approvalParams.push(requesterId);
             }
@@ -794,9 +794,9 @@ export const editExpense = async (req, res) => {
             // Determine status based on role
             // If Admin edits: Auto-approve (or keep approved) and sync wallet.
             // If User edits: Revert to pending, remove from wallet.
-            const isAdm = requesterRole === "admin";
-            const newStatus = isAdm ? 'approved' : 'pending';
-            const newIsEdit = isAdm ? 0 : 1;
+            const isElevated = requesterRole === "admin" || requesterRole === "superadmin";
+            const newStatus = isElevated ? 'approved' : 'pending';
+            const newIsEdit = isElevated ? 0 : 1;
 
             // Fetch latest icon/color for the category (in case category changed)
             const [cat] = await pool.query(
@@ -835,7 +835,7 @@ export const editExpense = async (req, res) => {
                 ]
             );
 
-            if (isAdm) {
+            if (isElevated) {
                 // SYNC WITH WALLET (Upsert)
                 const [[existingWallet]] = await pool.query(`SELECT id FROM wallet WHERE approval_id=?`, [expense_id]);
 
@@ -916,7 +916,7 @@ export const editExpense = async (req, res) => {
         let params = [expense_id];
 
         // If not admin, ensure they own the expense
-        if (requesterRole !== "admin") {
+        if (requesterRole !== "admin" && requesterRole !== "superadmin") {
             query += ` AND user_id=?`;
             params.push(requesterId);
         }
@@ -929,7 +929,7 @@ export const editExpense = async (req, res) => {
             let approvalQuery = `SELECT * FROM approvals WHERE id=?`;
             let approvalParams = [expense_id];
 
-            if (requesterRole !== "admin") {
+            if (requesterRole !== "admin" && requesterRole !== "superadmin") {
                 approvalQuery += ` AND user_id=?`;
                 approvalParams.push(requesterId);
             }
@@ -940,9 +940,9 @@ export const editExpense = async (req, res) => {
                 return res.status(404).json({ message: "Not found" });
             }
 
-            const isAdm = requesterRole === "admin";
-            const newStatus = isAdm ? 'approved' : 'pending';
-            const isEditFlag = isAdm ? 0 : 1;
+            const isElevated = requesterRole === "admin" || requesterRole === "superadmin";
+            const newStatus = isElevated ? 'approved' : 'pending';
+            const isEditFlag = isElevated ? 0 : 1;
 
             // Update the expense in approvals table
             await pool.query(
@@ -970,7 +970,7 @@ export const editExpense = async (req, res) => {
                 ]
             );
 
-            if (isAdm) {
+            if (isElevated) {
                 // Upsert into EXPENSES table (The "Wallet Update" user refers to is expenses logic)
                 // Check if we already have an original_expense_id
                 let origExpId = approval.original_expense_id;
@@ -1021,7 +1021,7 @@ export const editExpense = async (req, res) => {
         }
 
         // 3. ADMIN: Update directly in expenses table
-        if (requesterRole === "admin") {
+        if (requesterRole === "admin" || requesterRole === "superadmin") {
             await pool.query(
                 `UPDATE expenses SET 
                     total=?, branch=?, date=?, main_category=?, sub_category=?, 
@@ -1145,7 +1145,7 @@ export const getUserAllExpenses = async (req, res) => {
         let params = [];
 
         // 1. Role Filter
-        if (String(userRole).toLowerCase() !== 'admin') {
+        if (String(userRole).toLowerCase() !== 'admin' && String(userRole).toLowerCase() !== 'superadmin') {
             approvalsQuery += ` AND user_id = ?`;
             expensesQuery += ` AND e.user_id = ?`;
             approvalsCountQuery += ` AND user_id = ?`;
@@ -1212,7 +1212,7 @@ export const getTransactionFilterOptions = async (req, res) => {
         let whereExp = "";
         let whereApp = "";
 
-        if (String(userRole).toLowerCase() !== 'admin') {
+        if (String(userRole).toLowerCase() !== 'admin' && String(userRole).toLowerCase() !== 'superadmin') {
             whereExp = "WHERE user_id = ?";
             whereApp = "WHERE user_id = ?";
             params = [userId];
@@ -1230,7 +1230,7 @@ export const getTransactionFilterOptions = async (req, res) => {
 
         // Get Names
         let uniqueNames = [];
-        if (String(userRole).toLowerCase() === 'admin') {
+        if (String(userRole).toLowerCase() === 'admin' || String(userRole).toLowerCase() === 'superadmin') {
             // Get all users
             const [users] = await pool.query(`SELECT name FROM users`);
             uniqueNames = users.map(u => u.name).filter(Boolean);
@@ -1268,7 +1268,7 @@ export const deleteExpense = async (req, res) => {
         }
 
         // 2. Permission check
-        if (userRole !== 'admin' && expense.user_id !== userId) {
+        if (userRole !== 'admin' && userRole !== 'superadmin' && expense.user_id !== userId) {
             return res.status(403).json({ message: "You are not authorized to delete this expense" });
         }
 

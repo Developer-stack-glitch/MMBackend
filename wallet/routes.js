@@ -7,7 +7,9 @@ import {
     getAllWalletDetails,
     getAllWalletTransactions,
     getVendors,
-    addVendor
+    addVendor,
+    updateVendor,
+    deleteVendor
 } from "./controller.js";
 
 import { verifyToken } from "../middleware/auth.js";
@@ -29,5 +31,7 @@ router.get("/all-wallet-transactions", verifyToken, getAllWalletTransactions);
 // VENDORS
 router.get("/vendors", verifyToken, getVendors);
 router.post("/add-vendor", verifyToken, addVendor);
+router.put("/update-vendor/:id", verifyToken, updateVendor);
+router.delete("/delete-vendor/:id", verifyToken, deleteVendor);
 
 export default router;

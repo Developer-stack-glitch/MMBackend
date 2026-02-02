@@ -56,8 +56,15 @@ export const verifyToken = async (req, res, next) => {
  * ------------------------------------------------
  */
 export const verifyAdmin = (req, res, next) => {
-    if (!req.user || req.user.role !== "admin") {
-        return res.status(403).json({ error: "Admin only" });
+    if (!req.user || (req.user.role !== "admin" && req.user.role !== "superadmin")) {
+        return res.status(403).json({ error: "Access denied." });
+    }
+    next();
+};
+
+export const verifySuperAdmin = (req, res, next) => {
+    if (!req.user || req.user.role !== "superadmin") {
+        return res.status(403).json({ error: "Super admin only." });
     }
     next();
 };

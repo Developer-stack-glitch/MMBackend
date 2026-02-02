@@ -4,8 +4,8 @@ export const createUser = async (req, res) => {
     try {
         const { name, email, password, role } = req.body;
 
-        // ✅ Only admin can create user
-        if (req.user.role !== "admin") {
+        // ✅ Only admin and superadmin can create user
+        if (req.user.role !== "admin" && req.user.role !== "superadmin") {
             return res.status(403).json({ error: "You don't have permission to create users." });
         }
 
@@ -53,9 +53,10 @@ export const listUsers = async (_req, res) => {
 export const deleteUser = async (req, res) => {
     try {
         const { id } = req.params;
+        const requesterRole = req.user.role;
 
-        // ✅ Only admin can delete users
-        if (req.user.role !== "admin") {
+        // ✅ Only admin or superadmin can delete users
+        if (requesterRole !== "admin" && requesterRole !== "superadmin") {
             return res.status(403).json({ error: "You do not have permission to delete users." });
         }
 
@@ -74,9 +75,20 @@ export const deleteUser = async (req, res) => {
             return res.status(404).json({ error: "User not found" });
         }
 
-        // ✅ Admin cannot delete another admin
-        if (target[0].role === "admin") {
-            return res.status(403).json({ error: "Admin users cannot be deleted." });
+        const targetRole = target[0].role;
+
+        // Permissions logic:
+        // Superadmin: can delete Admin and User.
+        // Admin: can only delete User.
+
+        if (requesterRole === "admin") {
+            if (targetRole === "admin" || targetRole === "superadmin") {
+                return res.status(403).json({ error: "Admin cannot delete another admin or superadmin." });
+            }
+        }
+
+        if (targetRole === "superadmin" && requesterRole !== "superadmin") {
+            return res.status(403).json({ error: "Superadmin users cannot be deleted except by another superadmin." });
         }
 
         // ✅ Delete user
@@ -86,6 +98,55 @@ export const deleteUser = async (req, res) => {
 
     } catch (e) {
         console.error("ADMIN DELETE USER ERROR:", e);
+        return res.status(500).json({ error: "Server error" });
+    }
+};
+
+export const changeUserPassword = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { password } = req.body;
+        const requesterRole = req.user.role;
+
+        // ✅ Only admin/superadmin can change user password
+        if (requesterRole !== "admin" && requesterRole !== "superadmin") {
+            return res.status(403).json({ error: "You don't have permission to change user password." });
+        }
+
+        if (!password) {
+            return res.status(400).json({ error: "Password is required" });
+        }
+
+        // Check if user exists
+        const [user] = await pool.query(
+            "SELECT id, role FROM users WHERE id = ? LIMIT 1",
+            [id]
+        );
+
+        if (!user.length) {
+            return res.status(404).json({ error: "User not found" });
+        }
+
+        const targetRole = user[0].role;
+
+        // Permissions logic:
+        // Admin cannot change another Admin's password if not allowed (as per superadmin request)
+        if (requesterRole === "admin" && (targetRole === "admin" || targetRole === "superadmin")) {
+            if (Number(id) !== Number(req.user.id)) {
+                return res.status(403).json({ error: "Admin can only change password for staff users." });
+            }
+        }
+
+        // ✅ Update password
+        await pool.query(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            [password, id]
+        );
+
+        return res.json({ message: "Password updated successfully" });
+
+    } catch (e) {
+        console.error("ADMIN CHANGE PASSWORD ERROR:", e);
         return res.status(500).json({ error: "Server error" });
     }
 };
