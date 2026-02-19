@@ -15,7 +15,9 @@ import {
     editExpense,
     getUserAllExpenses,
     deleteExpense,
-    getTransactionFilterOptions
+    getTransactionFilterOptions,
+    editIncome,
+    deleteIncome
 } from "./controller.js";
 import { verifyToken } from "../middleware/auth.js";
 import { upload } from "../middleware/upload.js";
@@ -26,6 +28,7 @@ router.post("/add-expense", verifyToken, upload.array("invoices", 10), addExpens
 router.post("/add-approval", verifyToken, upload.array("invoices", 10), addApproval);
 router.post("/add-income", verifyToken, upload.array("invoices", 10), addIncome);
 router.post("/edit-expense", verifyToken, upload.array("invoices", 10), editExpense);
+router.post("/edit-income", verifyToken, upload.array("invoices", 10), editIncome);
 router.get("/expenses-transactions", verifyToken, getAllExpenses);
 router.get("/income-transactions", verifyToken, getAllIncome);
 router.get("/summary", getSummary);
@@ -38,5 +41,6 @@ router.get("/income-paginated", verifyToken, getIncomePaginated);
 router.get("/user-all-expenses", verifyToken, getUserAllExpenses);
 router.get("/filter-options", verifyToken, getTransactionFilterOptions);
 router.delete("/delete-expense/:id", verifyToken, deleteExpense);
+router.delete("/delete-income/:id", verifyToken, deleteIncome);
 
 export default router;

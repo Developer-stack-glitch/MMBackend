@@ -1288,3 +1288,94 @@ export const deleteExpense = async (req, res) => {
         res.status(500).json({ message: "Server Error" });
     }
 };
+
+/* -------------------------------------------------------
+   EDIT INCOME
+---------------------------------------------------------*/
+export const editIncome = async (req, res) => {
+    let { income_id, updates } = req.body;
+    const requesterId = req.user.id;
+    const requesterRole = req.user.role;
+
+    try {
+        if (typeof updates === 'string') {
+            updates = JSON.parse(updates);
+        }
+
+        const [[income]] = await pool.query(`SELECT * FROM incomes WHERE id = ?`, [income_id]);
+        if (!income) {
+            return res.status(404).json({ message: "Income not found" });
+        }
+
+        if (requesterRole !== 'admin' && requesterRole !== 'superadmin' && income.user_id !== requesterId) {
+            return res.status(403).json({ message: "Not authorized" });
+        }
+
+        const invoicePaths = req.files ? req.files.map(file => `/uploads/invoices/${file.filename}`) : [];
+        let existingInvoices = [];
+        if (updates.existingInvoices) {
+            try {
+                existingInvoices = JSON.parse(updates.existingInvoices);
+            } catch (e) {
+                existingInvoices = [];
+            }
+        }
+        const allInvoices = [...existingInvoices, ...invoicePaths];
+        const invoiceJson = allInvoices.length > 0 ? JSON.stringify(allInvoices) : null;
+
+        const [cat] = await pool.query(
+            `SELECT icon, color FROM income_category WHERE category_name = ? LIMIT 1`,
+            [updates.mainCategory]
+        );
+        const icon = cat[0]?.icon || income.icon;
+        const color = cat[0]?.color || income.color;
+
+        await pool.query(
+            `UPDATE incomes SET 
+                branch=?, date=?, total=?, category=?, description=?, invoice=?, icon=?, color=?
+             WHERE id=?`,
+            [
+                updates.branch,
+                updates.date,
+                updates.total,
+                updates.mainCategory,
+                updates.description || null,
+                invoiceJson,
+                icon,
+                color,
+                income_id
+            ]
+        );
+
+        return res.json({ message: "Income updated successfully" });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Server Error" });
+    }
+};
+
+/* -------------------------------------------------------
+   DELETE INCOME
+---------------------------------------------------------*/
+export const deleteIncome = async (req, res) => {
+    const { id } = req.params;
+    const requesterId = req.user.id;
+    const requesterRole = req.user.role;
+
+    try {
+        const [[income]] = await pool.query(`SELECT * FROM incomes WHERE id = ?`, [id]);
+        if (!income) {
+            return res.status(404).json({ message: "Income not found" });
+        }
+
+        if (requesterRole !== 'admin' && requesterRole !== 'superadmin' && income.user_id !== requesterId) {
+            return res.status(403).json({ message: "Not authorized" });
+        }
+
+        await pool.query(`DELETE FROM incomes WHERE id = ?`, [id]);
+        return res.json({ message: "Income deleted successfully" });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Server Error" });
+    }
+};
