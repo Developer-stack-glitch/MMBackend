@@ -568,6 +568,9 @@ export const getApprovals = async (req, res) => {
 
         const startDate = req.query.startDate;
         const endDate = req.query.endDate;
+        const nameFilter = req.query.name;
+        const branchFilter = req.query.branch;
+        const transactionFilter = req.query.transaction;
 
         let query = `SELECT * FROM approvals WHERE status='pending'`;
         let countQuery = `SELECT COUNT(*) as total FROM approvals WHERE status='pending'`;
@@ -577,6 +580,24 @@ export const getApprovals = async (req, res) => {
             query += ` AND user_id = ?`;
             countQuery += ` AND user_id = ?`;
             params.push(userId);
+        }
+
+        if (nameFilter && nameFilter !== 'All') {
+            query += ` AND name = ?`;
+            countQuery += ` AND name = ?`;
+            params.push(nameFilter);
+        }
+
+        if (branchFilter && branchFilter !== 'All') {
+            query += ` AND branch = ?`;
+            countQuery += ` AND branch = ?`;
+            params.push(branchFilter);
+        }
+
+        if (transactionFilter && transactionFilter !== 'All') {
+            query += ` AND transaction_from = ?`;
+            countQuery += ` AND transaction_from = ?`;
+            params.push(transactionFilter);
         }
 
         if (startDate && endDate) {
@@ -1106,6 +1127,7 @@ export const getUserAllExpenses = async (req, res) => {
 
         const nameFilter = req.query.name;
         const branchFilter = req.query.branch;
+        const transactionFilter = req.query.transaction;
         const startDate = req.query.startDate;
         const endDate = req.query.endDate;
 
@@ -1171,6 +1193,15 @@ export const getUserAllExpenses = async (req, res) => {
             params.push(branchFilter);
         }
 
+        // 4. Transaction Filter
+        if (transactionFilter && transactionFilter !== 'All') {
+            approvalsQuery += ` AND transaction_from = ?`;
+            expensesQuery += ` AND e.transaction_from = ?`;
+            approvalsCountQuery += ` AND transaction_from = ?`;
+            expensesCountQuery += ` AND e.transaction_from = ?`;
+            params.push(transactionFilter);
+        }
+
         if (startDate && endDate) {
             approvalsQuery += ` AND date >= ? AND date <= ?`;
             expensesQuery += ` AND e.date >= ? AND e.date <= ?`;
@@ -1228,6 +1259,16 @@ export const getTransactionFilterOptions = async (req, res) => {
         ].filter(Boolean);
         const uniqueBranches = [...new Set(allBranches)];
 
+        // Get unique transaction sources
+        const [expSources] = await pool.query(`SELECT DISTINCT transaction_from FROM expenses ${whereExp}`, params);
+        const [appSources] = await pool.query(`SELECT DISTINCT transaction_from FROM approvals ${whereApp}`, params);
+
+        const allSources = [
+            ...expSources.map(s => s.transaction_from),
+            ...appSources.map(s => s.transaction_from)
+        ].filter(Boolean);
+        const uniqueSources = [...new Set(allSources)];
+
         // Get Names
         let uniqueNames = [];
         if (String(userRole).toLowerCase() === 'admin' || String(userRole).toLowerCase() === 'superadmin') {
@@ -1241,7 +1282,8 @@ export const getTransactionFilterOptions = async (req, res) => {
 
         return res.json({
             branches: uniqueBranches,
-            names: uniqueNames
+            names: uniqueNames,
+            transactionSources: uniqueSources
         });
 
     } catch (err) {
