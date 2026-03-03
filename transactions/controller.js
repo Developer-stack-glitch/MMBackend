@@ -1234,6 +1234,79 @@ export const getUserAllExpenses = async (req, res) => {
     }
 };
 
+export const getExpensesTotalStats = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const role = req.user.role;
+
+        const { startDate, endDate, name, branch, transaction } = req.query;
+
+        let expWhere = "WHERE 1=1";
+        let appWhere = "WHERE 1=1";
+        let paramsExp = [];
+        let paramsApp = [];
+
+        if (String(role).toLowerCase() !== 'admin' && String(role).toLowerCase() !== 'superadmin') {
+            expWhere += " AND e.user_id = ?";
+            appWhere += " AND user_id = ?";
+            paramsExp.push(userId);
+            paramsApp.push(userId);
+        }
+
+        if (name && name !== 'All') {
+            expWhere += " AND u.name = ?";
+            appWhere += " AND name = ?";
+            paramsExp.push(name);
+            paramsApp.push(name);
+        }
+
+        if (branch && branch !== 'All') {
+            expWhere += " AND e.branch = ?";
+            appWhere += " AND branch = ?";
+            paramsExp.push(branch);
+            paramsApp.push(branch);
+        }
+
+        if (transaction && transaction !== 'All') {
+            expWhere += " AND e.transaction_from = ?";
+            appWhere += " AND transaction_from = ?";
+            paramsExp.push(transaction);
+            paramsApp.push(transaction);
+        }
+
+        if (startDate && endDate) {
+            expWhere += " AND e.date >= ? AND e.date <= ?";
+            appWhere += " AND date >= ? AND date <= ?";
+            paramsExp.push(startDate, endDate);
+            paramsApp.push(startDate, endDate);
+        }
+
+        // Sum Expenses
+        const expSql = `
+            SELECT SUM(e.total) AS totalExpense
+            FROM expenses e
+            LEFT JOIN users u ON u.id = e.user_id
+            ${expWhere}`;
+        const [[expResult]] = await pool.query(expSql, paramsExp);
+
+        // Sum Approvals (only approved ones)
+        const appSql = `
+            SELECT SUM(amount) AS totalApproved
+            FROM approvals
+            ${appWhere} AND status = 'approved'`;
+        const [[appResult]] = await pool.query(appSql, paramsApp);
+
+        return res.json({
+            totalExpense: expResult.totalExpense || 0,
+            totalApproved: appResult.totalApproved || 0
+        });
+
+    } catch (err) {
+        console.error("Error in getExpensesTotalStats:", err);
+        res.status(500).json({ message: "Server Error" });
+    }
+};
+
 
 export const getTransactionFilterOptions = async (req, res) => {
     try {
