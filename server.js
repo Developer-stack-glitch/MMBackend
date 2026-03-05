@@ -5,6 +5,8 @@ import cors from "cors";
 import helmet from "helmet";
 import path from "path";
 import { fileURLToPath } from "url";
+import { createServer } from "http";
+import { initSocket } from "./socket.js";
 
 import walletRoutes from "./wallet/routes.js";
 import authRoutes from "./auth/routes.js";
@@ -19,6 +21,8 @@ const __dirname = path.dirname(__filename);
 dotenv.config();
 
 const app = express();
+const httpServer = createServer(app);
+initSocket(httpServer);
 
 /* ---------------------------------------------------
    🔐 SECURITY (FIXED FOR IMAGE / PDF PREVIEW)
@@ -47,7 +51,13 @@ app.use(
                 ],
                 scriptSrc: ["'self'", "'unsafe-inline'"],
                 styleSrc: ["'self'", "'unsafe-inline'"],
-                connectSrc: ["'self'", "https://money.actecrm.com", "http://localhost:4000"],
+                connectSrc: [
+                    "'self'",
+                    "https://money.actecrm.com",
+                    "http://localhost:4000",
+                    "ws://localhost:4000",
+                    "wss://localhost:4000"
+                ],
                 frameSrc: [
                     "'self'",
                     "blob:",
@@ -125,7 +135,8 @@ app.get("/health", (_req, res) => {
 
 const port = Number(process.env.PORT || 4000);
 
-app.listen(port, "0.0.0.0", () => {
+httpServer.listen(port, "0.0.0.0", () => {
     console.log(`✅ Server running on http://localhost:${port}`);
     initializeAlertScheduler();
 });
+

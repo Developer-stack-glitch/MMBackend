@@ -28,22 +28,38 @@ export const addWallet = async (req, res) => {
 // ================= GET WALLET ENTRIES =================
 export const getWalletEntries = async (req, res) => {
     const { userId } = req.params;
+    const startDate = req.query.startDate || req.query.start_date;
+    const endDate = req.query.endDate || req.query.end_date;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
 
     try {
+        let incomeParams = [userId];
+        let expenseParams = [userId];
+        let dateFilter = "";
+
+        if (startDate && endDate) {
+            // Using DATE() to ensure comparison works even with timestamp columns
+            dateFilter = " AND DATE(date) >= DATE(?) AND DATE(date) <= DATE(?)";
+            incomeParams.push(startDate, endDate);
+            expenseParams.push(startDate, endDate);
+        }
+
         // 1. Income from wallet
         const [[incomeRow]] = await pool.query(
             `SELECT COALESCE(SUM(amount), 0) AS income 
              FROM wallet 
-             WHERE user_id = ? AND type = 'income'`,
-            [userId]
+             WHERE user_id = ? AND type = 'income'${dateFilter}`,
+            incomeParams
         );
 
-        // 2. Expense from expenses table (column: total)
+        // 2. Expense from expenses table
         const [[expenseRow]] = await pool.query(
             `SELECT COALESCE(SUM(total), 0) AS expense 
              FROM expenses 
-             WHERE user_id = ?`,
-            [userId]
+             WHERE user_id = ?${dateFilter}`,
+            expenseParams
         );
 
         // 3. Calculate Balance
@@ -51,32 +67,33 @@ export const getWalletEntries = async (req, res) => {
         const totalExpense = parseFloat(expenseRow.expense);
         const balance = totalIncome - totalExpense;
 
-        // 4. Wallet entries (from wallet table)
+        // 4. Wallet entries (from wallet table) - FILTERED FOR INCOME ONLY AS PER USER REQUEST
         const [rows] = await pool.query(
             `SELECT id, user_id, name, role, category, categoryColor, amount, frequency,
                     main_category, sub_category, branch, date, type, color, icon, invoice,
                     gst, transaction_from, transaction_to, vendor_name, vendor_number, end_date, note
              FROM wallet 
-             WHERE user_id = ?`,
-            [userId]
+             WHERE user_id = ? AND type = 'income'${dateFilter}
+             ORDER BY date DESC, id DESC
+             LIMIT ? OFFSET ?`,
+            [...incomeParams, limit, offset]
         );
 
-        // 5. Fetch expenses from expenses table
-        const [expenseRows] = await pool.query(
-            `SELECT id, user_id, NULL as name, 'User' as role, sub_category as category, color as categoryColor, total as amount, 'Once' as frequency,
-                    main_category, sub_category, branch, date, 'expense' as type, color, icon, invoice,
-                    gst, transaction_from, transaction_to, vendor_name, vendor_number, NULL as end_date, description as note
-             FROM expenses 
-             WHERE user_id = ?`,
-            [userId]
+        // 5. Fetch count for pagination (only income as spend is hidden)
+        const [[countRow]] = await pool.query(
+            `SELECT COUNT(*) as total 
+             FROM wallet 
+             WHERE user_id = ? AND type = 'income'${dateFilter}`,
+            incomeParams
         );
+        const total = countRow.total;
 
-        // 6. Merge and Sort
-        const allEntries = [...rows, ...expenseRows].sort((a, b) => new Date(b.date) - new Date(a.date));
-
-        // 7. Send response in correct format
+        // 8. Send response in correct format
         res.json({
-            entries: allEntries,
+            entries: rows,
+            total,
+            page,
+            limit,
             wallet: balance,
             income: totalIncome,
             expense: totalExpense,
@@ -154,8 +171,8 @@ export const getAllWalletDetails = async (req, res) => {
                 const queryParams = [user.id];
 
                 if (start_date && end_date) {
-                    incomeSql += ` AND date >= ? AND date <= ?`;
-                    expenseSql += ` AND date >= ? AND date <= ?`; // utilizing date column in expenses
+                    incomeSql += ` AND DATE(date) >= DATE(?) AND DATE(date) <= DATE(?)`;
+                    expenseSql += ` AND DATE(date) >= DATE(?) AND DATE(date) <= DATE(?)`; // utilizing date column in expenses
                     queryParams.push(start_date, end_date);
                 }
 

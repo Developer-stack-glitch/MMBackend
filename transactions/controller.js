@@ -1,4 +1,5 @@
 import { pool } from "../config/dbconfig.js";
+import { getIO } from "../socket.js";
 
 // Helper function to safely parse invoice data
 const parseInvoiceData = (invoiceString) => {
@@ -155,6 +156,14 @@ export const addApproval = async (req, res) => {
             ]
         );
 
+        // Notify admins about new approval
+        const io = getIO();
+        io.emit("newApproval", {
+            message: "A new approval request has been submitted",
+            user_id,
+            userName
+        });
+
         return res.json({ message: "Approval request sent!" });
 
     } catch (err) {
@@ -275,18 +284,26 @@ export const getAllIncome = async (req, res) => {
     try {
         const userId = req.user.id;
         const role = req.user.role;
+        const { startDate, endDate } = req.query;
 
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
         const offset = (page - 1) * limit;
 
-        let where = "";
+        let whereConditions = [];
         let params = [];
 
-        if (role === "user") {
-            where = "WHERE i.user_id = ?";
+        if (role !== "admin" && role !== "superadmin") {
+            whereConditions.push("i.user_id = ?");
             params.push(userId);
         }
+
+        if (startDate && endDate) {
+            whereConditions.push("i.date >= ? AND i.date <= ?");
+            params.push(startDate, endDate);
+        }
+
+        const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(" AND ")}` : "";
 
         const sql = `
             SELECT 
@@ -294,21 +311,20 @@ export const getAllIncome = async (req, res) => {
                 i.category, i.description, i.invoice, i.icon, i.color
             FROM incomes i
             LEFT JOIN users u ON u.id = i.user_id
-            ${where}
+            ${whereClause}
             ORDER BY i.date DESC, i.id DESC
             LIMIT ? OFFSET ?`;
 
-        params.push(limit, offset);
-
-        const [rows] = await pool.query(sql, params);
+        const totalParams = [...params, limit, offset];
+        const [rows] = await pool.query(sql, totalParams);
 
         const parsedRows = rows.map((row) => ({
             ...row,
             invoice: parseInvoiceData(row.invoice)
         }));
 
-        const countSql = `SELECT COUNT(*) AS total FROM incomes i ${where}`;
-        const [[count]] = await pool.query(countSql, (role !== "admin" && role !== "superadmin") ? [userId] : []);
+        const countSql = `SELECT COUNT(*) AS total FROM incomes i ${whereClause}`;
+        const [[count]] = await pool.query(countSql, params);
 
         return res.json({
             data: parsedRows,
@@ -716,8 +732,15 @@ export const approveExpense = async (req, res) => {
                     id
                 ]
             );
-            return res.json({ message: "Approved successfully and added to wallet!" });
         }
+
+        // Notify user about approval status change
+        const io = getIO();
+        io.emit("approvalUpdated", {
+            id,
+            status: 'approved',
+            user_id: request.user_id
+        });
 
         return res.json({ message: "Approved successfully and added to wallet!" });
 
@@ -742,6 +765,13 @@ export const rejectExpense = async (req, res) => {
         if (result.affectedRows === 0) {
             return res.status(404).json({ message: "Request not found" });
         }
+
+        // Notify user about rejection (though in this code it's deleted)
+        const io = getIO();
+        io.emit("approvalUpdated", {
+            id,
+            status: 'rejected'
+        });
 
         return res.json({ message: "Request rejected successfully!" });
 
@@ -1113,9 +1143,6 @@ export const editExpense = async (req, res) => {
         res.status(500).json({ message: "Server Error" });
     }
 };
-
-
-
 
 export const getUserAllExpenses = async (req, res) => {
     try {
@@ -1494,3 +1521,126 @@ export const deleteIncome = async (req, res) => {
         res.status(500).json({ message: "Server Error" });
     }
 };
+
+/* -------------------------------------------------------
+   DASHBOARD APIS (Optimized)
+---------------------------------------------------------*/
+
+// 1. Stats endpoint
+export const getDashboardStats = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const role = req.user.role;
+        const { startDate, endDate, prevStartDate, prevEndDate } = req.query;
+
+        const getTotals = async (start, end) => {
+            let expWhere = "WHERE 1=1";
+            let walletWhere = "WHERE type = 'income'";
+            let paramsExp = [];
+            let paramsWallet = [];
+
+            if (role !== 'admin' && role !== 'superadmin') {
+                expWhere += " AND user_id = ?";
+                walletWhere += " AND user_id = ?";
+                paramsExp.push(userId);
+                paramsWallet.push(userId);
+            }
+
+            if (start && end) {
+                expWhere += " AND date >= ? AND date <= ?";
+                walletWhere += " AND date >= ? AND date <= ?";
+                paramsExp.push(start, end);
+                paramsWallet.push(start, end);
+            }
+
+            const [[exp]] = await pool.query(`SELECT SUM(total) as total FROM expenses ${expWhere}`, paramsExp);
+            const [[wallet]] = await pool.query(`SELECT SUM(amount) as total FROM wallet ${walletWhere}`, paramsWallet);
+
+            const expense = Number(exp.total || 0);
+            const income = Number(wallet.total || 0);
+
+            return { expense, income, balance: income - expense };
+        };
+
+        const current = await getTotals(startDate, endDate);
+        const previous = await getTotals(prevStartDate, prevEndDate);
+
+        res.json({ current, previous });
+    } catch (err) {
+        console.error("Dashboard Stats Error:", err);
+        res.status(500).json({ message: "Server Error" });
+    }
+};
+
+// 2. Charts endpoint
+export const getDashboardCharts = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const role = req.user.role;
+        const { startDate, endDate } = req.query;
+
+        let where = "WHERE 1=1";
+        let params = [];
+        if (role !== 'admin' && role !== 'superadmin') {
+            where += " AND user_id = ?";
+            params.push(userId);
+        }
+        if (startDate && endDate) {
+            where += " AND date >= ? AND date <= ?";
+            params.push(startDate, endDate);
+        }
+
+        // 1. Wallet Cash Flow Data (Income grouped by month)
+        const [walletData] = await pool.query(
+            `SELECT DATE_FORMAT(date, '%b') as month, SUM(amount) as value 
+             FROM wallet ${where.replace('1=1', 'type = \'income\'')} 
+             GROUP BY month ORDER BY MIN(date) DESC`, params);
+
+        // 2. Expense Category Breakdown
+        const [expenseData] = await pool.query(
+            `SELECT sub_category as name, SUM(total) as value 
+             FROM expenses ${where} 
+             GROUP BY sub_category ORDER BY value DESC`, params);
+
+        res.json({ walletData, expenseData });
+    } catch (err) {
+        console.error("Dashboard Charts Error:", err);
+        res.status(500).json({ message: "Server Error" });
+    }
+};
+
+// 3. Recent Transactions endpoint
+export const getRecentTransactions = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const role = req.user.role;
+
+        let expWhere = "WHERE 1=1";
+        let walletWhere = "WHERE type = 'income'";
+        let paramsExp = [];
+        let paramsWallet = [];
+
+        if (role !== 'admin' && role !== 'superadmin') {
+            expWhere += " AND e.user_id = ?";
+            walletWhere += " AND user_id = ?";
+            paramsExp.push(userId);
+            paramsWallet.push(userId);
+        }
+
+        const [expenses] = await pool.query(
+            `SELECT 'Expense' as type, e.date, e.total as amount, e.sub_category as category, e.branch, e.invoice as method, e.description, u.name as user_name 
+             FROM expenses e LEFT JOIN users u ON e.user_id = u.id ${expWhere} 
+             ORDER BY e.date DESC, e.id DESC LIMIT 5`, paramsExp);
+
+        const [approvals] = await pool.query(
+            `SELECT 'Wallet' as type, date, amount, sub_category as category, branch, invoice as method, note as description, name as user_name 
+             FROM wallet ${walletWhere} 
+             ORDER BY date DESC, id DESC LIMIT 5`, paramsWallet);
+
+        res.json({ expenses, approvals });
+    } catch (err) {
+        console.error("Dashboard Recent Transactions Error:", err);
+        res.status(500).json({ message: "Server Error" });
+    }
+};
+

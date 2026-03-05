@@ -18,6 +18,9 @@ import {
     getTransactionFilterOptions,
     editIncome,
     getExpensesTotalStats,
+    getDashboardStats,
+    getDashboardCharts,
+    getRecentTransactions,
     deleteIncome
 } from "./controller.js";
 import { verifyToken } from "../middleware/auth.js";
@@ -40,6 +43,9 @@ router.post("/reject-expense", rejectExpense);
 router.get("/expenses-paginated", verifyToken, getExpensesPaginated);
 router.get("/income-paginated", verifyToken, getIncomePaginated);
 router.get("/user-all-expenses", verifyToken, getUserAllExpenses);
+router.get("/dashboard-stats", verifyToken, getDashboardStats);
+router.get("/dashboard-charts", verifyToken, getDashboardCharts);
+router.get("/recent-transactions", verifyToken, getRecentTransactions);
 router.get("/filter-options", verifyToken, getTransactionFilterOptions);
 router.get("/expense-stats", verifyToken, getExpensesTotalStats);
 router.delete("/delete-expense/:id", verifyToken, deleteExpense);
