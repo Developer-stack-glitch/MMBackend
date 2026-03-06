@@ -54,6 +54,7 @@ app.use(
                 connectSrc: [
                     "'self'",
                     "https://money.actecrm.com",
+                    "wss://money.actecrm.com",
                     "http://localhost:4000",
                     "ws://localhost:4000",
                     "wss://localhost:4000"
