@@ -21,7 +21,9 @@ import {
     getDashboardStats,
     getDashboardCharts,
     getRecentTransactions,
-    deleteIncome
+    deleteIncome,
+    bulkUploadExpenses,
+    downloadExpenseTemplate
 } from "./controller.js";
 import { verifyToken } from "../middleware/auth.js";
 import { upload } from "../middleware/upload.js";
@@ -50,5 +52,8 @@ router.get("/filter-options", verifyToken, getTransactionFilterOptions);
 router.get("/expense-stats", verifyToken, getExpensesTotalStats);
 router.delete("/delete-expense/:id", verifyToken, deleteExpense);
 router.delete("/delete-income/:id", verifyToken, deleteIncome);
+
+router.post("/bulk-upload-expenses", verifyToken, upload.array("files", 100), bulkUploadExpenses);
+router.get("/download-expense-template", downloadExpenseTemplate);
 
 export default router;

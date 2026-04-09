@@ -1,5 +1,8 @@
 import { pool } from "../config/dbconfig.js";
 import { getIO } from "../socket.js";
+import fs from "fs";
+import csv from "csv-parser";
+import xlsx from "xlsx";
 
 // Helper function to safely parse invoice data
 const parseInvoiceData = (invoiceString) => {
@@ -44,8 +47,23 @@ export const addExpense = async (req, res) => {
             [mainCategory, subCategory]
         );
 
-        const icon = cat[0]?.icon || null;
-        const color = cat[0]?.color || null;
+        let icon = cat[0]?.icon || null;
+        let color = cat[0]?.color || null;
+
+        // ✅ AUTO-ADD CATEGORY IF MISSING
+        if (!cat.length || !icon) {
+            icon = "Receipt";
+            color = "#d4af37";
+            try {
+                await pool.query(
+                    `INSERT IGNORE INTO expense_category (main_category, sub_category, icon, color) 
+                     VALUES (?, ?, ?, ?)`,
+                    [mainCategory, subCategory, icon, color]
+                );
+            } catch (catErr) {
+                console.error("Error auto-adding category manual:", catErr);
+            }
+        }
 
         // Get uploaded file paths from multer
         const invoicePaths = req.files ? req.files.map(file => `/uploads/invoices/${file.filename}`) : [];
@@ -86,6 +104,241 @@ export const addExpense = async (req, res) => {
     }
 };
 
+// ================= BULK UPLOAD EXPENSES =================
+export const bulkUploadExpenses = async (req, res) => {
+    if (!req.files || !req.files.length) {
+        return res.status(400).json({ message: "No file uploaded" });
+    }
+
+    const userId = req.user.id;
+    const uploadedFile = req.files.find(f =>
+        f.originalname.toLowerCase().endsWith(".csv") ||
+        f.originalname.toLowerCase().endsWith(".xlsx") ||
+        f.originalname.toLowerCase().endsWith(".xls")
+    );
+
+    if (!uploadedFile) {
+        return res.status(400).json({ message: "No CSV or Excel file found among uploads" });
+    }
+
+    const isExcel = uploadedFile.originalname.toLowerCase().endsWith(".xlsx") ||
+        uploadedFile.originalname.toLowerCase().endsWith(".xls");
+
+    // Map original filenames to stored filenames for images
+    const imageMap = {};
+    req.files.forEach(f => {
+        const ext = f.originalname.toLowerCase().split('.').pop();
+        if (!["csv", "xlsx", "xls"].includes(ext)) {
+            imageMap[f.originalname.toLowerCase()] = `/uploads/invoices/${f.filename}`;
+        }
+    });
+
+    let results = [];
+    const filePath = uploadedFile.path;
+
+    // Helper: format date from DD-MM-YYYY to YYYY-MM-DD
+    const formatDate = (dateStr) => {
+        if (!dateStr) return null;
+
+        // Handle Excel numeric date serials
+        if (typeof dateStr === 'number') {
+            const date = new Date((dateStr - 25569) * 86400 * 1000);
+            return date.toISOString().split('T')[0];
+        }
+
+        if (typeof dateStr !== 'string') dateStr = String(dateStr);
+
+        // If it's already YYYY-MM-DD
+        if (/^\d{4}-\d{2}-\d{2}/.test(dateStr)) return dateStr.split('T')[0];
+        // If it's DD-MM-YYYY or DD/MM/YYYY
+        const parts = dateStr.split(/[-/]/);
+        if (parts.length === 3) {
+            // Assume DD-MM-YYYY if 1st part is day, 3rd is year
+            if (parts[2].length === 4) return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+            // Assume YYYY-MM-DD if 1st part is year
+            if (parts[0].length === 4) return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+        }
+        return dateStr;
+    };
+
+    try {
+        // Fetch all categories to cache icons and colors
+        const [categories] = await pool.query("SELECT main_category, sub_category, icon, color FROM expense_category");
+        const categoryMap = {};
+        categories.forEach(cat => {
+            const key = `${cat.main_category.trim().toLowerCase()}|${cat.sub_category.trim().toLowerCase()}`;
+            categoryMap[key] = { icon: cat.icon, color: cat.color };
+        });
+
+        if (isExcel) {
+            const workbook = xlsx.readFile(filePath);
+            const sheetName = workbook.SheetNames[0];
+            results = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
+        } else {
+            const stream = fs.createReadStream(filePath).pipe(csv());
+            for await (const row of stream) {
+                results.push(row);
+            }
+        }
+
+        let successCount = 0;
+        let errors = [];
+
+        for (let i = 0; i < results.length; i++) {
+            const row = results[i];
+            const {
+                Date: rawDate,
+                Branch,
+                Total,
+                MainCategory,
+                SubCategory,
+                Description,
+                SpendMode,
+                GST,
+                TransactionFrom,
+                TransactionTo,
+                VendorNumber,
+                VendorGST,
+                Invoice: invoiceValue // Filename from file
+            } = row;
+
+            if (!rawDate || !Branch || !Total || !MainCategory || !SubCategory) {
+                errors.push(`Row ${i + 1}: Required fields missing`);
+                continue;
+            }
+
+            const cleanMain = String(MainCategory).trim();
+            const cleanSub = String(SubCategory).trim();
+            const catKey = `${cleanMain.toLowerCase()}|${cleanSub.toLowerCase()}`;
+
+            let icon = categoryMap[catKey]?.icon || "Receipt";
+            let color = categoryMap[catKey]?.color || "#d4af37";
+
+            // ✅ AUTOMATICALLY ADD NEW CATEGORY
+            if (!categoryMap[catKey]) {
+                try {
+                    await pool.query(
+                        `INSERT IGNORE INTO expense_category (main_category, sub_category, icon, color) 
+                         VALUES (?, ?, ?, ?)`,
+                        [cleanMain, cleanSub, icon, color]
+                    );
+                    categoryMap[catKey] = { icon, color };
+                    console.log(`Auto-added new category: ${cleanMain} > ${cleanSub}`);
+                } catch (catErr) {
+                    console.error("Error auto-adding category:", catErr);
+                }
+            }
+
+            try {
+                const formattedDate = formatDate(rawDate);
+                // Try matching the invoice filename from the uploaded files
+                let invoiceJson = null;
+                const invFileName = String(invoiceValue || "").toLowerCase();
+                if (invoiceValue && imageMap[invFileName]) {
+                    invoiceJson = JSON.stringify([imageMap[invFileName]]);
+                } else if (invoiceValue && String(invoiceValue).startsWith("http")) { // Support URLs too
+                    invoiceJson = JSON.stringify([invoiceValue]);
+                }
+
+                await pool.query(
+                    `INSERT INTO expenses 
+                     (user_id, branch, date, total, main_category, sub_category, description, 
+                      icon, color, invoice, spend_mode, gst, status,
+                      transaction_from, transaction_to, vendor_name, vendor_number, vendor_gst)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?)`,
+                    [
+                        userId,
+                        Branch,
+                        formattedDate,
+                        Total,
+                        cleanMain,
+                        cleanSub,
+                        Description || null,
+                        icon,
+                        color,
+                        invoiceJson,
+                        SpendMode || null,
+                        GST || "No",
+                        TransactionFrom || null,
+                        TransactionTo || null,
+                        TransactionTo || null, // vendor_name
+                        VendorNumber || null,
+                        VendorGST || null
+                    ]
+                );
+                successCount++;
+            } catch (insErr) {
+                console.error(`Row ${i + 1} insert error:`, insErr.message);
+                errors.push(`Row ${i + 1}: ${insErr.message}`);
+            }
+        }
+
+        // Clean up data file, leave images
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+
+        if (successCount === 0 && results.length > 0) {
+            return res.status(400).json({
+                message: "Bulk upload failed. No records added.",
+                errors: errors.slice(0, 5)
+            });
+        }
+
+        res.json({
+            message: `${successCount} expenses uploaded successfully!`,
+            errors: errors.length > 0 ? errors.slice(0, 5) : []
+        });
+
+    } catch (err) {
+        console.error("Bulk upload processing error:", err);
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        res.status(500).json({ message: "Server error during bulk processing" });
+    }
+};
+
+// ================= DOWNLOAD EXPENSE TEMPLATE =================
+export const downloadExpenseTemplate = (req, res) => {
+    const headers = [
+        "Date",
+        "Branch",
+        "Total",
+        "MainCategory",
+        "SubCategory",
+        "Description",
+        "SpendMode",
+        "GST",
+        "TransactionFrom",
+        "TransactionTo",
+        "VendorNumber",
+        "VendorGST",
+        "Invoice"
+    ];
+
+    const sampleRow = [
+        "2023-10-27",
+        "Chennai",
+        "1500",
+        "Office Supplies",
+        "Stationery",
+        "Bulk purchase of pens and papers",
+        "UPI",
+        "No",
+        "Prakash Kotak",
+        "Amazon",
+        "",
+        "",
+        "invoice_sample.png"
+    ];
+
+    const csvContent = [
+        headers.join(","),
+        sampleRow.join(",")
+    ].join("\n");
+
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", "attachment; filename=expense_template.csv");
+    res.status(200).send(csvContent);
+};
+
 /* -------------------------------------------------------
    ADD APPROVAL (User)
 ---------------------------------------------------------*/
@@ -123,8 +376,23 @@ export const addApproval = async (req, res) => {
             [mainCategory, subCategory]
         );
 
-        const icon = cat[0]?.icon || null;
-        const color = cat[0]?.color || null;
+        let icon = cat[0]?.icon || null;
+        let color = cat[0]?.color || null;
+
+        // ✅ AUTO-ADD CATEGORY IF MISSING
+        if (!cat.length || !icon) {
+            icon = "Receipt";
+            color = "#d4af37";
+            try {
+                await pool.query(
+                    `INSERT IGNORE INTO expense_category (main_category, sub_category, icon, color) 
+                     VALUES (?, ?, ?, ?)`,
+                    [mainCategory, subCategory, icon, color]
+                );
+            } catch (catErr) {
+                console.error("Error auto-adding category manual approval:", catErr);
+            }
+        }
 
         // Get uploaded file paths from multer
         const invoicePaths = req.files ? req.files.map(file => `/uploads/invoices/${file.filename}`) : [];
@@ -189,8 +457,23 @@ export const addIncome = async (req, res) => {
             [mainCategory]
         );
 
-        const icon = cat[0]?.icon || null;
-        const color = cat[0]?.color || null;
+        let icon = cat[0]?.icon || null;
+        let color = cat[0]?.color || null;
+
+        // ✅ AUTO-ADD CATEGORY IF MISSING
+        if (!cat.length || !icon) {
+            icon = "TrendingUp";
+            color = "#006b29ff";
+            try {
+                await pool.query(
+                    `INSERT IGNORE INTO income_category (category_name, icon, color) 
+                     VALUES (?, ?, ?)`,
+                    [mainCategory, icon, color]
+                );
+            } catch (catErr) {
+                console.error("Error auto-adding income category manual:", catErr);
+            }
+        }
 
         // Get uploaded file paths from multer
         const invoicePaths = req.files ? req.files.map(file => `/uploads/invoices/${file.filename}`) : [];
