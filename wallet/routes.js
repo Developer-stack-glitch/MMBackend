@@ -9,7 +9,9 @@ import {
     getVendors,
     addVendor,
     updateVendor,
-    deleteVendor
+    deleteVendor,
+    editWallet,
+    deleteWallet
 } from "./controller.js";
 
 import { verifyToken } from "../middleware/auth.js";
@@ -18,6 +20,8 @@ const router = express.Router();
 
 // ADD WALLET ENTRY
 router.post("/add-wallet", addWallet);
+router.put("/edit-wallet/:id", verifyToken, editWallet);
+router.delete("/delete-wallet/:id", verifyToken, deleteWallet);
 
 
 // GET WALLET LIST (protected)

@@ -291,3 +291,40 @@ export const deleteVendor = async (req, res) => {
     }
 };
 
+// ================= EDIT WALLET ENTRY =================
+export const editWallet = async (req, res) => {
+    const { id } = req.params;
+    const { amount, date, note } = req.body;
+
+    try {
+        const [result] = await pool.query(
+            "UPDATE wallet SET amount = ?, date = ?, note = ? WHERE id = ?",
+            [amount, date, note, id]
+        );
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: "Transaction not found" });
+        }
+        res.json({ message: "Wallet updated successfully" });
+    } catch (err) {
+        console.error("Error editing wallet:", err);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+// ================= DELETE WALLET ENTRY =================
+export const deleteWallet = async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        const [result] = await pool.query("DELETE FROM wallet WHERE id = ?", [id]);
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: "Transaction not found" });
+        }
+        res.json({ message: "Wallet deleted successfully" });
+    } catch (err) {
+        console.error("Error deleting wallet:", err);
+        res.status(500).json({ message: "Server error" });
+    }
+};
