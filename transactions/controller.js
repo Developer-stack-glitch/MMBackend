@@ -899,6 +899,12 @@ export const getApprovals = async (req, res) => {
             params.push(transactionFilter);
         }
 
+        if (req.query.category && req.query.category !== 'All') {
+            query += ` AND sub_category = ?`;
+            countQuery += ` AND sub_category = ?`;
+            params.push(req.query.category);
+        }
+
         if (startDate && endDate) {
             query += ` AND date >= ? AND date <= ?`;
             countQuery += ` AND date >= ? AND date <= ?`;
@@ -1512,6 +1518,15 @@ export const getUserAllExpenses = async (req, res) => {
             params.push(transactionFilter);
         }
 
+        // 5. Category Filter
+        if (req.query.category && req.query.category !== 'All') {
+            approvalsQuery += ` AND sub_category = ?`;
+            expensesQuery += ` AND e.sub_category = ?`;
+            approvalsCountQuery += ` AND sub_category = ?`;
+            expensesCountQuery += ` AND e.sub_category = ?`;
+            params.push(req.query.category);
+        }
+
         if (startDate && endDate) {
             approvalsQuery += ` AND date >= ? AND date <= ?`;
             expensesQuery += ` AND e.date >= ? AND e.date <= ?`;
@@ -1549,7 +1564,7 @@ export const getExpensesTotalStats = async (req, res) => {
         const userId = req.user.id;
         const role = req.user.role;
 
-        const { startDate, endDate, name, branch, transaction } = req.query;
+        const { startDate, endDate, name, branch, transaction, category } = req.query;
 
         let expWhere = "WHERE 1=1";
         let appWhere = "WHERE 1=1";
@@ -1582,6 +1597,13 @@ export const getExpensesTotalStats = async (req, res) => {
             appWhere += " AND transaction_from = ?";
             paramsExp.push(transaction);
             paramsApp.push(transaction);
+        }
+
+        if (category && category !== 'All') {
+            expWhere += " AND e.sub_category = ?";
+            appWhere += " AND sub_category = ?";
+            paramsExp.push(category);
+            paramsApp.push(category);
         }
 
         if (startDate && endDate) {
@@ -1663,10 +1685,21 @@ export const getTransactionFilterOptions = async (req, res) => {
             uniqueNames = [usr?.name].filter(Boolean);
         }
 
+        // Get unique categories
+        const [expCats] = await pool.query(`SELECT DISTINCT sub_category FROM expenses ${whereExp}`, params);
+        const [appCats] = await pool.query(`SELECT DISTINCT sub_category FROM approvals ${whereApp}`, params);
+
+        const allCats = [
+            ...expCats.map(c => c.sub_category),
+            ...appCats.map(c => c.sub_category)
+        ].filter(Boolean);
+        const uniqueCats = [...new Set(allCats)];
+
         return res.json({
             branches: uniqueBranches,
             names: uniqueNames,
-            transactionSources: uniqueSources
+            transactionSources: uniqueSources,
+            categories: uniqueCats
         });
 
     } catch (err) {
