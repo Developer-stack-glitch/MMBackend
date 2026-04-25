@@ -19,6 +19,18 @@ const parseInvoiceData = (invoiceString) => {
     }
 };
 
+// Helper function to handle multi-select filters in SQL
+const appendMultiSelectFilter = (queryParts, params, field, value) => {
+    if (!value || value === 'All') return;
+    
+    const values = Array.isArray(value) ? value : [value];
+    if (values.length === 0 || values.includes('All')) return;
+
+    const placeholders = values.map(() => '?').join(',');
+    queryParts.push(`${field} IN (${placeholders})`);
+    params.push(...values);
+};
+
 export const addExpense = async (req, res) => {
     const {
         user_id,
@@ -353,7 +365,11 @@ export const addApproval = async (req, res) => {
         description,
         gst,
         transaction_from,
-        end_date
+        end_date,
+        vendor_name,
+        vendor_number,
+        vendor_gst,
+        transaction_to
     } = req.body;
 
     if (!branch || !date || !total || !mainCategory || !subCategory) {
@@ -402,8 +418,9 @@ export const addApproval = async (req, res) => {
             `INSERT INTO approvals
              (user_id, name, role, category, categoryColor, amount, frequency, 
               main_category, sub_category, branch, date, status, color, icon, invoice,
-              gst, original_expense_id, transaction_from, end_date)
-             VALUES (?, ?, ?, ?, ?, ?, 'Once', ?, ?, ?, ?, 'pending', ?, ?, ?, ?, NULL, ?, ?)`,
+              gst, original_expense_id, transaction_from, end_date,
+              vendor_name, vendor_number, vendor_gst, transaction_to)
+             VALUES (?, ?, ?, ?, ?, ?, 'Once', ?, ?, ?, ?, 'pending', ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)`,
             [
                 user_id,
                 userName,
@@ -420,7 +437,11 @@ export const addApproval = async (req, res) => {
                 invoiceJson,         // invoice
                 gst || "No",         // gst
                 transaction_from || null,
-                end_date || null     // end_date
+                end_date || null,    // end_date
+                vendor_name || null,
+                vendor_number || null,
+                vendor_gst || null,
+                transaction_to || null
             ]
         );
 
@@ -867,49 +888,31 @@ export const getApprovals = async (req, res) => {
 
         const startDate = req.query.startDate;
         const endDate = req.query.endDate;
-        const nameFilter = req.query.name;
-        const branchFilter = req.query.branch;
-        const transactionFilter = req.query.transaction;
-
-        let query = `SELECT * FROM approvals WHERE status='pending'`;
-        let countQuery = `SELECT COUNT(*) as total FROM approvals WHERE status='pending'`;
+        
+        let whereParts = ["status='pending'"];
         let params = [];
 
         if (String(role).toLowerCase() !== 'admin' && String(role).toLowerCase() !== 'superadmin') {
-            query += ` AND user_id = ?`;
-            countQuery += ` AND user_id = ?`;
+            whereParts.push("user_id = ?");
             params.push(userId);
         }
 
-        if (nameFilter && nameFilter !== 'All') {
-            query += ` AND name = ?`;
-            countQuery += ` AND name = ?`;
-            params.push(nameFilter);
-        }
-
-        if (branchFilter && branchFilter !== 'All') {
-            query += ` AND branch = ?`;
-            countQuery += ` AND branch = ?`;
-            params.push(branchFilter);
-        }
-
-        if (transactionFilter && transactionFilter !== 'All') {
-            query += ` AND transaction_from = ?`;
-            countQuery += ` AND transaction_from = ?`;
-            params.push(transactionFilter);
-        }
-
-        if (req.query.category && req.query.category !== 'All') {
-            query += ` AND sub_category = ?`;
-            countQuery += ` AND sub_category = ?`;
-            params.push(req.query.category);
-        }
+        appendMultiSelectFilter(whereParts, params, 'name', req.query.name);
+        appendMultiSelectFilter(whereParts, params, 'branch', req.query.branch);
+        appendMultiSelectFilter(whereParts, params, 'transaction_from', req.query.transaction);
+        appendMultiSelectFilter(whereParts, params, 'sub_category', req.query.category);
+        appendMultiSelectFilter(whereParts, params, 'main_category', req.query.main_category);
+        appendMultiSelectFilter(whereParts, params, 'vendor_name', req.query.vendor);
+        appendMultiSelectFilter(whereParts, params, 'gst', req.query.gst);
 
         if (startDate && endDate) {
-            query += ` AND date >= ? AND date <= ?`;
-            countQuery += ` AND date >= ? AND date <= ?`;
+            whereParts.push("date >= ? AND date <= ?");
             params.push(startDate, endDate);
         }
+
+        const whereClause = whereParts.length > 0 ? `WHERE ${whereParts.join(" AND ")}` : "";
+        let query = `SELECT * FROM approvals ${whereClause}`;
+        let countQuery = `SELECT COUNT(*) as total FROM approvals ${whereClause}`;
 
         query += ` ORDER BY id DESC LIMIT ? OFFSET ?`;
 
@@ -1441,108 +1444,60 @@ export const getUserAllExpenses = async (req, res) => {
         const limit = parseInt(req.query.limit) || 10;
         const offset = (page - 1) * limit;
 
-        const nameFilter = req.query.name;
-        const branchFilter = req.query.branch;
-        const transactionFilter = req.query.transaction;
         const startDate = req.query.startDate;
         const endDate = req.query.endDate;
 
-        let approvalsQuery = `SELECT
-                id,
-                date,
-                amount AS total,
-                branch,
-                main_category,
-                sub_category,
-                role AS description,
-                gst,
-                invoice,
-                color,
-                icon,
-                status,
-                transaction_from,
-                end_date,
-                name AS user_name,
-                is_edit
-             FROM approvals
-             WHERE status = 'approved'`;
-
-        let expensesQuery = `SELECT
-                e.id, e.date, e.total, e.branch, e.main_category, e.sub_category, e.description,
-                e.spend_mode, e.gst, e.invoice,
-                e.color, e.icon,
-                e.status, e.transaction_from, e.transaction_to, e.vendor_name, e.vendor_number, e.vendor_gst,
-                u.name AS user_name
-             FROM expenses e
-             LEFT JOIN users u ON e.user_id = u.id
-             WHERE 1=1`;
-
-        let approvalsCountQuery = `SELECT COUNT(*) as total FROM approvals WHERE status = 'approved'`;
-        let expensesCountQuery = `SELECT COUNT(*) as total FROM expenses e LEFT JOIN users u ON e.user_id = u.id WHERE 1=1`;
-
-        let params = [];
+        let appWhereParts = ["status = 'approved'"];
+        let expWhereParts = ["1=1"];
+        let appParams = [];
+        let expParams = [];
 
         // 1. Role Filter
         if (String(userRole).toLowerCase() !== 'admin' && String(userRole).toLowerCase() !== 'superadmin') {
-            approvalsQuery += ` AND user_id = ?`;
-            expensesQuery += ` AND e.user_id = ?`;
-            approvalsCountQuery += ` AND user_id = ?`;
-            expensesCountQuery += ` AND e.user_id = ?`;
-            params.push(userId);
+            appWhereParts.push("user_id = ?");
+            expWhereParts.push("e.user_id = ?");
+            appParams.push(userId);
+            expParams.push(userId);
         }
 
-        // 2. Name Filter
-        if (nameFilter && nameFilter !== 'All') {
-            approvalsQuery += ` AND name = ?`;
-            expensesQuery += ` AND u.name = ?`;
-            approvalsCountQuery += ` AND name = ?`;
-            expensesCountQuery += ` AND u.name = ?`;
-            params.push(nameFilter);
-        }
+        // Helper to apply filters to both tables
+        const applyDualFilter = (appField, expField, value) => {
+            appendMultiSelectFilter(appWhereParts, appParams, appField, value);
+            appendMultiSelectFilter(expWhereParts, expParams, expField, value);
+        };
 
-        // 3. Branch Filter
-        if (branchFilter && branchFilter !== 'All') {
-            approvalsQuery += ` AND branch = ?`;
-            expensesQuery += ` AND e.branch = ?`;
-            approvalsCountQuery += ` AND branch = ?`;
-            expensesCountQuery += ` AND e.branch = ?`;
-            params.push(branchFilter);
-        }
-
-        // 4. Transaction Filter
-        if (transactionFilter && transactionFilter !== 'All') {
-            approvalsQuery += ` AND transaction_from = ?`;
-            expensesQuery += ` AND e.transaction_from = ?`;
-            approvalsCountQuery += ` AND transaction_from = ?`;
-            expensesCountQuery += ` AND e.transaction_from = ?`;
-            params.push(transactionFilter);
-        }
-
-        // 5. Category Filter
-        if (req.query.category && req.query.category !== 'All') {
-            approvalsQuery += ` AND sub_category = ?`;
-            expensesQuery += ` AND e.sub_category = ?`;
-            approvalsCountQuery += ` AND sub_category = ?`;
-            expensesCountQuery += ` AND e.sub_category = ?`;
-            params.push(req.query.category);
-        }
+        applyDualFilter('name', 'u.name', req.query.name);
+        applyDualFilter('branch', 'e.branch', req.query.branch);
+        applyDualFilter('transaction_from', 'e.transaction_from', req.query.transaction);
+        applyDualFilter('sub_category', 'e.sub_category', req.query.category);
+        applyDualFilter('main_category', 'e.main_category', req.query.main_category);
+        applyDualFilter('vendor_name', 'e.vendor_name', req.query.vendor);
+        applyDualFilter('gst', 'e.gst', req.query.gst);
 
         if (startDate && endDate) {
-            approvalsQuery += ` AND date >= ? AND date <= ?`;
-            expensesQuery += ` AND e.date >= ? AND e.date <= ?`;
-            approvalsCountQuery += ` AND date >= ? AND date <= ?`;
-            expensesCountQuery += ` AND e.date >= ? AND e.date <= ?`;
-            params.push(startDate, endDate);
+            appWhereParts.push("date >= ? AND date <= ?");
+            expWhereParts.push("e.date >= ? AND e.date <= ?");
+            appParams.push(startDate, endDate);
+            expParams.push(startDate, endDate);
         }
+
+        const appWhereClause = appWhereParts.length > 0 ? `WHERE ${appWhereParts.join(" AND ")}` : "";
+        const expWhereClause = expWhereParts.length > 0 ? `WHERE ${expWhereParts.join(" AND ")}` : "";
+
+        let approvalsQuery = `SELECT id, date, amount AS total, branch, main_category, sub_category, role AS description, gst, invoice, color, icon, status, transaction_from, end_date, name AS user_name, is_edit FROM approvals ${appWhereClause}`;
+        let expensesQuery = `SELECT e.id, e.date, e.total, e.branch, e.main_category, e.sub_category, e.description, e.spend_mode, e.gst, e.invoice, e.color, e.icon, e.status, e.transaction_from, e.transaction_to, e.vendor_name, e.vendor_number, e.vendor_gst, u.name AS user_name FROM expenses e LEFT JOIN users u ON e.user_id = u.id ${expWhereClause}`;
+
+        let approvalsCountQuery = `SELECT COUNT(*) as total FROM approvals ${appWhereClause}`;
+        let expensesCountQuery = `SELECT COUNT(*) as total FROM expenses e LEFT JOIN users u ON e.user_id = u.id ${expWhereClause}`;
 
         approvalsQuery += ` ORDER BY date DESC, id DESC LIMIT ? OFFSET ?`;
         expensesQuery += ` ORDER BY e.date DESC, e.id DESC LIMIT ? OFFSET ?`;
 
-        const [approvals] = await pool.query(approvalsQuery, [...params, limit, offset]);
-        const [expenses] = await pool.query(expensesQuery, [...params, limit, offset]);
+        const [approvals] = await pool.query(approvalsQuery, [...appParams, limit, offset]);
+        const [expenses] = await pool.query(expensesQuery, [...expParams, limit, offset]);
 
-        const [[approvalsCount]] = await pool.query(approvalsCountQuery, params);
-        const [[expensesCount]] = await pool.query(expensesCountQuery, params);
+        const [[approvalsCount]] = await pool.query(approvalsCountQuery, appParams);
+        const [[expensesCount]] = await pool.query(expensesCountQuery, expParams);
 
         return res.json({
             approvals: approvals,
@@ -1564,56 +1519,59 @@ export const getExpensesTotalStats = async (req, res) => {
         const userId = req.user.id;
         const role = req.user.role;
 
-        const { startDate, endDate, name, branch, transaction, category } = req.query;
+        const { startDate, endDate } = req.query;
 
-        let expWhere = "WHERE 1=1";
-        let appWhere = "WHERE 1=1";
+        let expWhereParts = ["1=1"];
+        let appWhereParts = ["status = 'approved'"];
         let paramsExp = [];
         let paramsApp = [];
 
         if (String(role).toLowerCase() !== 'admin' && String(role).toLowerCase() !== 'superadmin') {
-            expWhere += " AND e.user_id = ?";
-            appWhere += " AND user_id = ?";
+            expWhereParts.push("e.user_id = ?");
+            appWhereParts.push("user_id = ?");
             paramsExp.push(userId);
             paramsApp.push(userId);
         }
 
-        if (name && name !== 'All') {
-            expWhere += " AND u.name = ?";
-            appWhere += " AND name = ?";
-            paramsExp.push(name);
-            paramsApp.push(name);
-        }
+        const applyStatsFilter = (appField, expField, value) => {
+            appendMultiSelectFilter(appWhereParts, paramsApp, appField, value);
+            appendMultiSelectFilter(expWhereParts, paramsExp, expField, value);
+        };
+        
+        // Wait, appParams and expParams should be used.
+        // I'll rewrite this part for clarity
+        appendMultiSelectFilter(expWhereParts, paramsExp, 'u.name', req.query.name);
+        appendMultiSelectFilter(appWhereParts, paramsApp, 'name', req.query.name);
 
-        if (branch && branch !== 'All') {
-            expWhere += " AND e.branch = ?";
-            appWhere += " AND branch = ?";
-            paramsExp.push(branch);
-            paramsApp.push(branch);
-        }
+        appendMultiSelectFilter(expWhereParts, paramsExp, 'e.branch', req.query.branch);
+        appendMultiSelectFilter(appWhereParts, paramsApp, 'branch', req.query.branch);
 
-        if (transaction && transaction !== 'All') {
-            expWhere += " AND e.transaction_from = ?";
-            appWhere += " AND transaction_from = ?";
-            paramsExp.push(transaction);
-            paramsApp.push(transaction);
-        }
+        appendMultiSelectFilter(expWhereParts, paramsExp, 'e.transaction_from', req.query.transaction);
+        appendMultiSelectFilter(appWhereParts, paramsApp, 'transaction_from', req.query.transaction);
 
-        if (category && category !== 'All') {
-            expWhere += " AND e.sub_category = ?";
-            appWhere += " AND sub_category = ?";
-            paramsExp.push(category);
-            paramsApp.push(category);
-        }
+        appendMultiSelectFilter(expWhereParts, paramsExp, 'e.sub_category', req.query.category);
+        appendMultiSelectFilter(appWhereParts, paramsApp, 'sub_category', req.query.category);
+
+        appendMultiSelectFilter(expWhereParts, paramsExp, 'e.main_category', req.query.main_category);
+        appendMultiSelectFilter(appWhereParts, paramsApp, 'main_category', req.query.main_category);
+
+        appendMultiSelectFilter(expWhereParts, paramsExp, 'e.vendor_name', req.query.vendor);
+        appendMultiSelectFilter(appWhereParts, paramsApp, 'vendor_name', req.query.vendor);
+
+        appendMultiSelectFilter(expWhereParts, paramsExp, 'e.gst', req.query.gst);
+        appendMultiSelectFilter(appWhereParts, paramsApp, 'gst', req.query.gst);
+
 
         if (startDate && endDate) {
-            expWhere += " AND e.date >= ? AND e.date <= ?";
-            appWhere += " AND date >= ? AND date <= ?";
+            expWhereParts.push("e.date >= ? AND e.date <= ?");
+            appWhereParts.push("date >= ? AND date <= ?");
             paramsExp.push(startDate, endDate);
             paramsApp.push(startDate, endDate);
         }
 
-        // Sum Expenses
+        const expWhere = `WHERE ${expWhereParts.join(" AND ")}`;
+        const appWhere = `WHERE ${appWhereParts.join(" AND ")}`;
+
         const expSql = `
             SELECT SUM(e.total) AS totalExpense
             FROM expenses e
@@ -1625,7 +1583,8 @@ export const getExpensesTotalStats = async (req, res) => {
         const appSql = `
             SELECT SUM(amount) AS totalApproved
             FROM approvals
-            ${appWhere} AND status = 'approved'`;
+            ${appWhere}`;
+        
         const [[appResult]] = await pool.query(appSql, paramsApp);
 
         return res.json({
@@ -1657,27 +1616,16 @@ export const getTransactionFilterOptions = async (req, res) => {
         // Get unique branches
         const [expBranches] = await pool.query(`SELECT DISTINCT branch FROM expenses ${whereExp}`, params);
         const [appBranches] = await pool.query(`SELECT DISTINCT branch FROM approvals ${whereApp}`, params);
-
-        const allBranches = [
-            ...expBranches.map(b => b.branch),
-            ...appBranches.map(b => b.branch)
-        ].filter(Boolean);
-        const uniqueBranches = [...new Set(allBranches)];
+        const uniqueBranches = [...new Set([...expBranches.map(b => b.branch), ...appBranches.map(b => b.branch)])].filter(Boolean);
 
         // Get unique transaction sources
         const [expSources] = await pool.query(`SELECT DISTINCT transaction_from FROM expenses ${whereExp}`, params);
         const [appSources] = await pool.query(`SELECT DISTINCT transaction_from FROM approvals ${whereApp}`, params);
-
-        const allSources = [
-            ...expSources.map(s => s.transaction_from),
-            ...appSources.map(s => s.transaction_from)
-        ].filter(Boolean);
-        const uniqueSources = [...new Set(allSources)];
+        const uniqueSources = [...new Set([...expSources.map(s => s.transaction_from), ...appSources.map(s => s.transaction_from)])].filter(Boolean);
 
         // Get Names
         let uniqueNames = [];
         if (String(userRole).toLowerCase() === 'admin' || String(userRole).toLowerCase() === 'superadmin') {
-            // Get all users
             const [users] = await pool.query(`SELECT name FROM users`);
             uniqueNames = users.map(u => u.name).filter(Boolean);
         } else {
@@ -1685,21 +1633,36 @@ export const getTransactionFilterOptions = async (req, res) => {
             uniqueNames = [usr?.name].filter(Boolean);
         }
 
-        // Get unique categories
+        // Get unique categories (sub_category)
         const [expCats] = await pool.query(`SELECT DISTINCT sub_category FROM expenses ${whereExp}`, params);
         const [appCats] = await pool.query(`SELECT DISTINCT sub_category FROM approvals ${whereApp}`, params);
+        const uniqueCats = [...new Set([...expCats.map(c => c.sub_category), ...appCats.map(c => c.sub_category)])].filter(Boolean);
 
-        const allCats = [
-            ...expCats.map(c => c.sub_category),
-            ...appCats.map(c => c.sub_category)
-        ].filter(Boolean);
-        const uniqueCats = [...new Set(allCats)];
+        // Get unique main categories
+        const [expMainCats] = await pool.query(`SELECT DISTINCT main_category FROM expenses ${whereExp}`, params);
+        const [appMainCats] = await pool.query(`SELECT DISTINCT main_category FROM approvals ${whereApp}`, params);
+        const uniqueMainCats = [...new Set([...expMainCats.map(c => c.main_category), ...appMainCats.map(c => c.main_category)])].filter(Boolean);
+
+        // Get unique vendors
+        const [expVendors] = await pool.query(`SELECT DISTINCT vendor_name FROM expenses ${whereExp}`, params);
+        const [expVendors2] = await pool.query(`SELECT DISTINCT transaction_to FROM expenses ${whereExp}`, params);
+        const [appVendors] = await pool.query(`SELECT DISTINCT vendor_name FROM approvals ${whereApp}`, params);
+        const [appVendors2] = await pool.query(`SELECT DISTINCT transaction_to FROM approvals ${whereApp}`, params);
+        const uniqueVendors = [...new Set([
+            ...expVendors.map(v => v.vendor_name),
+            ...expVendors2.map(v => v.transaction_to),
+            ...appVendors.map(v => v.vendor_name),
+            ...appVendors2.map(v => v.transaction_to)
+        ])].filter(Boolean);
 
         return res.json({
             branches: uniqueBranches,
             names: uniqueNames,
             transactionSources: uniqueSources,
-            categories: uniqueCats
+            categories: uniqueCats,
+            mainCategories: uniqueMainCats,
+            vendors: uniqueVendors,
+            gstOptions: ["Yes", "No"]
         });
 
     } catch (err) {
