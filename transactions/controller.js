@@ -910,6 +910,15 @@ export const getApprovals = async (req, res) => {
             params.push(startDate, endDate);
         }
 
+        if (req.query.minAmount) {
+            whereParts.push("amount >= ?");
+            params.push(req.query.minAmount);
+        }
+        if (req.query.maxAmount) {
+            whereParts.push("amount <= ?");
+            params.push(req.query.maxAmount);
+        }
+
         const whereClause = whereParts.length > 0 ? `WHERE ${whereParts.join(" AND ")}` : "";
         let query = `SELECT * FROM approvals ${whereClause}`;
         let countQuery = `SELECT COUNT(*) as total FROM approvals ${whereClause}`;
@@ -1481,6 +1490,19 @@ export const getUserAllExpenses = async (req, res) => {
             expParams.push(startDate, endDate);
         }
 
+        if (req.query.minAmount) {
+            appWhereParts.push("amount >= ?");
+            expWhereParts.push("e.total >= ?");
+            appParams.push(req.query.minAmount);
+            expParams.push(req.query.minAmount);
+        }
+        if (req.query.maxAmount) {
+            appWhereParts.push("amount <= ?");
+            expWhereParts.push("e.total <= ?");
+            appParams.push(req.query.maxAmount);
+            expParams.push(req.query.maxAmount);
+        }
+
         const appWhereClause = appWhereParts.length > 0 ? `WHERE ${appWhereParts.join(" AND ")}` : "";
         const expWhereClause = expWhereParts.length > 0 ? `WHERE ${expWhereParts.join(" AND ")}` : "";
 
@@ -1567,6 +1589,19 @@ export const getExpensesTotalStats = async (req, res) => {
             appWhereParts.push("date >= ? AND date <= ?");
             paramsExp.push(startDate, endDate);
             paramsApp.push(startDate, endDate);
+        }
+
+        if (req.query.minAmount) {
+            expWhereParts.push("e.total >= ?");
+            appWhereParts.push("amount >= ?");
+            paramsExp.push(req.query.minAmount);
+            paramsApp.push(req.query.minAmount);
+        }
+        if (req.query.maxAmount) {
+            expWhereParts.push("e.total <= ?");
+            appWhereParts.push("amount <= ?");
+            paramsExp.push(req.query.maxAmount);
+            paramsApp.push(req.query.maxAmount);
         }
 
         const expWhere = `WHERE ${expWhereParts.join(" AND ")}`;
@@ -1682,30 +1717,47 @@ export const deleteExpense = async (req, res) => {
     const userId = req.user.id;
 
     try {
-        // 1. Check if expense exists
+        // 1. Check if expense exists in the expenses table
         const [[expense]] = await pool.query(`SELECT * FROM expenses WHERE id=?`, [id]);
-        if (!expense) {
-            return res.status(404).json({ message: "Expense not found" });
+        
+        if (expense) {
+            // Permission check
+            if (userRole !== 'admin' && userRole !== 'superadmin' && expense.user_id !== userId) {
+                return res.status(403).json({ message: "You are not authorized to delete this expense" });
+            }
+
+            // Delete from expenses
+            await pool.query(`DELETE FROM expenses WHERE id=?`, [id]);
+
+            // If there is a linked approval, set it back to pending
+            await pool.query(`UPDATE approvals SET original_expense_id=NULL, status='pending' WHERE original_expense_id=?`, [id]);
+
+            return res.json({ message: "Expense deleted successfully" });
         }
 
-        // 2. Permission check
-        if (userRole !== 'admin' && userRole !== 'superadmin' && expense.user_id !== userId) {
-            return res.status(403).json({ message: "You are not authorized to delete this expense" });
+        // 2. If not found in expenses, check in the approvals table
+        const [[approval]] = await pool.query(`SELECT * FROM approvals WHERE id=?`, [id]);
+        
+        if (approval) {
+            // Permission check
+            if (userRole !== 'admin' && userRole !== 'superadmin' && approval.user_id !== userId) {
+                return res.status(403).json({ message: "You are not authorized to delete this record" });
+            }
+
+            // Delete from approvals
+            await pool.query(`DELETE FROM approvals WHERE id=?`, [id]);
+
+            // Also delete from wallet if it was linked to this approval
+            await pool.query(`DELETE FROM wallet WHERE approval_id=?`, [id]);
+
+            return res.json({ message: "Record deleted successfully" });
         }
 
-        // 3. Delete from expenses
-        await pool.query(`DELETE FROM expenses WHERE id=?`, [id]);
-
-        // 4. Also check if there is a linked approval (original_expense_id) and maybe reset it?
-        // Or if this expense WAS an approval converted?
-        // If an approval has original_expense_id = this id, we might want to nullify it or set status back to pending?
-        // For now, let's just nullify the connection so it doesn't point to non-existent expense
-        await pool.query(`UPDATE approvals SET original_expense_id=NULL, status='pending' WHERE original_expense_id=?`, [id]);
-
-        return res.json({ message: "Expense deleted successfully" });
+        // 3. Not found in either table
+        return res.status(404).json({ message: "Expense not found" });
 
     } catch (err) {
-        console.error(err);
+        console.error("Error in deleteExpense:", err);
         res.status(500).json({ message: "Server Error" });
     }
 };
