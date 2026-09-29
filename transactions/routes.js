@@ -23,8 +23,31 @@ import {
     getRecentTransactions,
     deleteIncome,
     bulkUploadExpenses,
-    downloadExpenseTemplate
+    downloadExpenseTemplate,
+    getBanks
 } from "./controller.js";
+import {
+    uploadBankStatement,
+    getBankTransactions,
+    getBankStatementHistory,
+    getBankStatementSummary,
+    getAllBanksSummary,
+    createTransactionAction,
+    updateTransactionAction,
+    deleteTransactionAction,
+    getTransactionAction,
+    getReconciliationSummary
+} from "./bankStatementController.js";
+import {
+    uploadCashStatement,
+    getCashStatements,
+    getCashStatementSummary,
+    getCashReconciliationSummary,
+    createCashTransactionAction,
+    getCashTransactionAction,
+    updateCashTransactionAction,
+    deleteCashTransactionAction
+} from "./cashStatementController.js";
 import { verifyToken } from "../middleware/auth.js";
 import { upload } from "../middleware/upload.js";
 
@@ -55,5 +78,28 @@ router.delete("/delete-income/:id", verifyToken, deleteIncome);
 
 router.post("/bulk-upload-expenses", verifyToken, upload.array("files", 100), bulkUploadExpenses);
 router.get("/download-expense-template", downloadExpenseTemplate);
+
+// Bank Statements
+router.post("/bank-statements/upload", verifyToken, upload.single("statement"), uploadBankStatement);
+router.get("/bank-statements/summary", verifyToken, getAllBanksSummary);
+router.get("/bank-statements/reconciliation-summary", verifyToken, getReconciliationSummary);
+router.post("/bank-statements/transaction-action", verifyToken, createTransactionAction);
+router.put("/bank-statements/transaction-action/:transactionId", verifyToken, updateTransactionAction);
+router.delete("/bank-statements/transaction-action/:transactionId", verifyToken, deleteTransactionAction);
+router.get("/bank-statements/transaction-action/:transactionId", verifyToken, getTransactionAction);
+router.get("/bank-statements/:bankId", verifyToken, getBankTransactions);
+router.get("/bank-statements/:bankId/history", verifyToken, getBankStatementHistory);
+router.get("/bank-statements/:bankId/summary", verifyToken, getBankStatementSummary);
+router.get("/banks", verifyToken, getBanks);
+
+// Cash Statements
+router.post("/cash-statements/upload", verifyToken, upload.single("statement"), uploadCashStatement);
+router.get("/cash-statements", verifyToken, getCashStatements);
+router.get("/cash-statements/summary", verifyToken, getCashStatementSummary);
+router.post("/cash-statements/transaction-action", verifyToken, createCashTransactionAction);
+router.get("/cash-statements/transaction-action/:transactionId", verifyToken, getCashTransactionAction);
+router.put("/cash-statements/transaction-action/:transactionId", verifyToken, updateCashTransactionAction);
+router.delete("/cash-statements/transaction-action/:transactionId", verifyToken, deleteCashTransactionAction);
+router.get("/cash-statements/reconciliation-summary", verifyToken, getCashReconciliationSummary);
 
 export default router;

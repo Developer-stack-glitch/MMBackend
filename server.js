@@ -13,6 +13,7 @@ import authRoutes from "./auth/routes.js";
 import categoryRoutes from "./categories/routes.js";
 import transactionRoutes from "./transactions/routes.js";
 import calendarRoutes from "./calendar/routes.js";
+import reportRoutes from "./reports/routes.js";
 import { initializeAlertScheduler } from "./calendar/alertScheduler.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -121,6 +122,7 @@ app.use("/api/categories", categoryRoutes);
 app.use("/api/transactions", transactionRoutes);
 app.use("/api/wallet", walletRoutes);
 app.use("/api/calendar", calendarRoutes);
+app.use("/api/reports", reportRoutes);
 
 /* ---------------------------------------------------
    ❤️ HEALTH CHECK

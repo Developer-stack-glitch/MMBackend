@@ -107,7 +107,7 @@ export const updateIncomeCategory = async (req, res) => {
     }
 };
 
-// ✅ DELETE EXPENSE CATEGORY (Single or All by Main)
+// DELETE EXPENSE CATEGORY (Single or All by Main)
 export const deleteExpenseCategory = async (req, res) => {
     try {
         const { id } = req.params;
@@ -131,7 +131,7 @@ export const deleteExpenseCategory = async (req, res) => {
     }
 };
 
-// ✅ DELETE MAIN CATEGORY (Deleting by Name)
+// DELETE MAIN CATEGORY (Deleting by Name)
 export const deleteExpenseCategoryMain = async (req, res) => {
     try {
         const { mainCategory } = req.params;
@@ -144,7 +144,7 @@ export const deleteExpenseCategoryMain = async (req, res) => {
     }
 };
 
-// ✅ DELETE INCOME CATEGORY
+// DELETE INCOME CATEGORY
 export const deleteIncomeCategory = async (req, res) => {
     try {
         const { id } = req.params;
@@ -152,6 +152,32 @@ export const deleteIncomeCategory = async (req, res) => {
         return res.json({ message: "Income category deleted" });
     } catch (err) {
         console.error(err);
+        res.status(500).json({ error: "Server error" });
+    }
+};
+
+// GET ALL TRANSACTION ACTION CATEGORIES
+export const getTransactionActionCategories = async (req, res) => {
+    try {
+        const [rows] = await pool.query(
+            "SELECT id, main_category, sub_category FROM transaction_action_categories WHERE is_active = 1 ORDER BY sort_order ASC, id ASC"
+        );
+        return res.json(rows);
+    } catch (err) {
+        console.error("Error fetching transaction action categories:", err);
+        res.status(500).json({ error: "Server error" });
+    }
+};
+
+// GET ALL BRANCHES
+export const getBranches = async (req, res) => {
+    try {
+        const [rows] = await pool.query(
+            "SELECT id, name FROM branches WHERE is_active = 1 ORDER BY id ASC"
+        );
+        return res.json(rows);
+    } catch (err) {
+        console.error("Error fetching branches:", err);
         res.status(500).json({ error: "Server error" });
     }
 };

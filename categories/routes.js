@@ -8,13 +8,17 @@ import {
     updateIncomeCategory,
     deleteExpenseCategory,
     deleteExpenseCategoryMain,
-    deleteIncomeCategory
+    deleteIncomeCategory,
+    getTransactionActionCategories,
+    getBranches
 } from "./controller.js";
 
 const router = Router();
 
 router.get("/expense-category", getExpenseCategories);
 router.get("/income-category", getIncomeCategories);
+router.get("/transaction-action-category", getTransactionActionCategories);
+router.get("/branches", getBranches);
 
 router.post("/expense/add", createExpenseCategory);
 router.post("/income/add", createIncomeCategory);

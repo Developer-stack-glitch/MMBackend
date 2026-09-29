@@ -22,7 +22,7 @@ const parseInvoiceData = (invoiceString) => {
 // Helper function to handle multi-select filters in SQL
 const appendMultiSelectFilter = (queryParts, params, field, value) => {
     if (!value || value === 'All') return;
-    
+
     const values = Array.isArray(value) ? value : [value];
     if (values.length === 0 || values.includes('All')) return;
 
@@ -888,7 +888,7 @@ export const getApprovals = async (req, res) => {
 
         const startDate = req.query.startDate;
         const endDate = req.query.endDate;
-        
+
         let whereParts = ["status='pending'"];
         let params = [];
 
@@ -1559,7 +1559,7 @@ export const getExpensesTotalStats = async (req, res) => {
             appendMultiSelectFilter(appWhereParts, paramsApp, appField, value);
             appendMultiSelectFilter(expWhereParts, paramsExp, expField, value);
         };
-        
+
         // Wait, appParams and expParams should be used.
         // I'll rewrite this part for clarity
         appendMultiSelectFilter(expWhereParts, paramsExp, 'u.name', req.query.name);
@@ -1619,7 +1619,7 @@ export const getExpensesTotalStats = async (req, res) => {
             SELECT SUM(amount) AS totalApproved
             FROM approvals
             ${appWhere}`;
-        
+
         const [[appResult]] = await pool.query(appSql, paramsApp);
 
         return res.json({
@@ -1719,7 +1719,7 @@ export const deleteExpense = async (req, res) => {
     try {
         // 1. Check if expense exists in the expenses table
         const [[expense]] = await pool.query(`SELECT * FROM expenses WHERE id=?`, [id]);
-        
+
         if (expense) {
             // Permission check
             if (userRole !== 'admin' && userRole !== 'superadmin' && expense.user_id !== userId) {
@@ -1737,7 +1737,7 @@ export const deleteExpense = async (req, res) => {
 
         // 2. If not found in expenses, check in the approvals table
         const [[approval]] = await pool.query(`SELECT * FROM approvals WHERE id=?`, [id]);
-        
+
         if (approval) {
             // Permission check
             if (userRole !== 'admin' && userRole !== 'superadmin' && approval.user_id !== userId) {
@@ -1972,6 +1972,30 @@ export const getRecentTransactions = async (req, res) => {
     } catch (err) {
         console.error("Dashboard Recent Transactions Error:", err);
         res.status(500).json({ message: "Server Error" });
+    }
+};
+
+// Bank List
+export const getBanks = async (req, res) => {
+    try {
+        const [banks] = await pool.query(`
+            SELECT id, bank_name
+            FROM banks
+            WHERE status = 1
+            ORDER BY id ASC
+        `);
+
+        return res.status(200).json({
+            success: true,
+            banks,
+        });
+    } catch (error) {
+        console.error("Get banks error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Failed to fetch banks",
+        });
     }
 };
 
