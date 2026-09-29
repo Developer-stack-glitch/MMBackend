@@ -3,15 +3,20 @@ import ExcelJS from "exceljs";
 
 export const downloadBranchReportExcel = async (req, res) => {
     try {
-        const { start_date, end_date, category, sub_category, transaction_type } = req.query;
+        const { start_date, end_date, category, sub_category, transaction_type, branches: requestedBranchesStr } = req.query;
 
         if (!start_date || !end_date) {
             return res.status(400).json({ message: "Start date and End date are required." });
         }
 
         // 1. Fetch Branches
-        const [branches] = await pool.query("SELECT name FROM branches WHERE is_active = 1 ORDER BY id ASC");
-        const branchNames = branches.map(b => b.name);
+        const [allBranchesData] = await pool.query("SELECT name FROM branches WHERE is_active = 1 ORDER BY id ASC");
+        let branchNames = allBranchesData.map(b => b.name);
+        
+        if (requestedBranchesStr) {
+            const reqBranches = requestedBranchesStr.split(',');
+            branchNames = branchNames.filter(b => reqBranches.includes(b));
+        }
 
         // 2. Fetch Data
         // Need to add end_date 23:59:59 support
@@ -40,6 +45,14 @@ export const downloadBranchReportExcel = async (req, res) => {
             queryParamsBank.push(...subCategories);
             categoryFilterCash += ` AND a.sub_category IN (${subCategories.map(() => '?').join(',')})`;
             queryParamsCash.push(...subCategories);
+        }
+
+        if (requestedBranchesStr) {
+            const reqBranches = requestedBranchesStr.split(',');
+            categoryFilterBank += ` AND a.branch IN (${reqBranches.map(() => '?').join(',')})`;
+            queryParamsBank.push(...reqBranches);
+            categoryFilterCash += ` AND a.branch IN (${reqBranches.map(() => '?').join(',')})`;
+            queryParamsCash.push(...reqBranches);
         }
 
         if (transaction_type === 'Credit') {
