@@ -99,7 +99,7 @@ export const downloadBranchReportExcel = async (req, res) => {
 
         // Fetch category colors
         const [categoriesColors] = await pool.query(
-            "SELECT main_category, color FROM expense_category GROUP BY main_category"
+            "SELECT main_category, MAX(color) AS color FROM expense_category GROUP BY main_category"
         );
         const categoryColorMap = {};
         categoriesColors.forEach(c => {
@@ -357,7 +357,7 @@ export const downloadMonthReportExcel = async (req, res) => {
 
         // Fetch category colors
         const [categoriesColors] = await pool.query(
-            "SELECT main_category, color FROM expense_category GROUP BY main_category"
+            "SELECT main_category, MAX(color) AS color FROM expense_category GROUP BY main_category"
         );
         const categoryColorMap = {};
         categoriesColors.forEach(c => {
@@ -631,7 +631,7 @@ export const downloadOverallReportExcel = async (req, res) => {
         const [branchResults] = await pool.query(branchQuery, queryParams);
 
         // Fetch category colors
-        const [categoriesColors] = await pool.query("SELECT main_category, color FROM expense_category GROUP BY main_category");
+        const [categoriesColors] = await pool.query("SELECT main_category, MAX(color) AS color FROM expense_category GROUP BY main_category");
         const categoryColorMap = {};
         categoriesColors.forEach(c => {
             let hexColor = (c.color || '#cccccc').replace('#', '');
